@@ -363,3 +363,151 @@ func TestOpenAI_TranslateResponse_Passthrough(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Nil(t, body)
 }
+
+// --- Anthropic Error Response Tests ---
+
+func TestTranslateResponse_AnthropicError(t *testing.T) {
+	body := map[string]any{
+		"type": "error",
+		"error": map[string]any{
+			"type":    "invalid_request_error",
+			"message": "max_tokens must be a positive integer",
+		},
+	}
+
+	translated, err := NewAnthropicProvider().TranslateResponse(body, "claude-sonnet-4-20250514")
+	require.NoError(t, err)
+
+	errObj := translated["error"].(map[string]any)
+	assert.Equal(t, "invalid_request_error", errObj["type"])
+	assert.Equal(t, "max_tokens must be a positive integer", errObj["message"])
+	assert.Equal(t, "invalid_request_error", errObj["code"])
+}
+
+// --- Anthropic Tool Use Tests ---
+
+func TestTranslateResponse_ToolUse(t *testing.T) {
+	body := map[string]any{
+		"id":   "msg_123",
+		"type": "message",
+		"content": []any{
+			map[string]any{"type": "text", "text": "I'll check the weather."},
+			map[string]any{
+				"type":  "tool_use",
+				"id":    "toolu_abc",
+				"name":  "get_weather",
+				"input": map[string]any{"location": "San Francisco"},
+			},
+		},
+		"stop_reason": "tool_use",
+		"usage":       map[string]any{"input_tokens": float64(20), "output_tokens": float64(15)},
+	}
+
+	translated, err := NewAnthropicProvider().TranslateResponse(body, "claude-sonnet-4-20250514")
+	require.NoError(t, err)
+
+	choices := translated["choices"].([]any)
+	choice := choices[0].(map[string]any)
+	assert.Equal(t, "tool_calls", choice["finish_reason"])
+
+	msg := choice["message"].(map[string]any)
+	assert.Equal(t, "I'll check the weather.", msg["content"])
+
+	toolCalls := msg["tool_calls"].([]any)
+	require.Len(t, toolCalls, 1)
+
+	tc := toolCalls[0].(map[string]any)
+	assert.Equal(t, "toolu_abc", tc["id"])
+	assert.Equal(t, "function", tc["type"])
+
+	fn := tc["function"].(map[string]any)
+	assert.Equal(t, "get_weather", fn["name"])
+}
+
+// --- Developer Role Tests ---
+
+func TestTranslateRequest_DeveloperRole(t *testing.T) {
+	body := map[string]any{
+		"model": "claude-sonnet-4-20250514",
+		"messages": []any{
+			map[string]any{"role": "developer", "content": "You are a coding assistant."},
+			map[string]any{"role": "user", "content": "Hello"},
+		},
+	}
+
+	translated, _, _, err := NewAnthropicProvider().TranslateRequest(body)
+	require.NoError(t, err)
+
+	assert.Equal(t, "You are a coding assistant.", translated["system"])
+
+	msgs := translated["messages"].([]map[string]any)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, "user", msgs[0]["role"])
+}
+
+func TestTranslateRequest_SystemAndDeveloperConcatenated(t *testing.T) {
+	body := map[string]any{
+		"model": "claude-sonnet-4-20250514",
+		"messages": []any{
+			map[string]any{"role": "system", "content": "Be concise."},
+			map[string]any{"role": "developer", "content": "Use markdown."},
+			map[string]any{"role": "user", "content": "Hello"},
+		},
+	}
+
+	translated, _, _, err := NewAnthropicProvider().TranslateRequest(body)
+	require.NoError(t, err)
+
+	assert.Equal(t, "Be concise.\nUse markdown.", translated["system"])
+}
+
+func TestTranslateRequest_ToolRoleRejected(t *testing.T) {
+	body := map[string]any{
+		"model": "claude-sonnet-4-20250514",
+		"messages": []any{
+			map[string]any{"role": "user", "content": "Hi"},
+			map[string]any{"role": "tool", "content": "result", "tool_call_id": "abc"},
+		},
+	}
+
+	_, _, _, err := NewAnthropicProvider().TranslateRequest(body)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "tool")
+	assert.Contains(t, err.Error(), "not supported")
+}
+
+func TestTranslateRequest_UnknownRoleRejected(t *testing.T) {
+	body := map[string]any{
+		"model": "claude-sonnet-4-20250514",
+		"messages": []any{
+			map[string]any{"role": "narrator", "content": "Once upon a time"},
+		},
+	}
+
+	_, _, _, err := NewAnthropicProvider().TranslateRequest(body)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown role")
+}
+
+// --- Content Extraction Edge Cases ---
+
+func TestTranslateRequest_NonTextContentSkipped(t *testing.T) {
+	body := map[string]any{
+		"model": "claude-sonnet-4-20250514",
+		"messages": []any{
+			map[string]any{
+				"role": "user",
+				"content": []any{
+					map[string]any{"type": "text", "text": "Describe this"},
+					map[string]any{"type": "image_url", "image_url": map[string]any{"url": "https://example.com/img.png"}},
+				},
+			},
+		},
+	}
+
+	translated, _, _, err := NewAnthropicProvider().TranslateRequest(body)
+	require.NoError(t, err)
+
+	msgs := translated["messages"].([]map[string]any)
+	assert.Equal(t, "Describe this", msgs[0]["content"])
+}

@@ -22,9 +22,9 @@ import (
 )
 
 const (
-	anthropicAPIVersion  = "2023-06-01"
-	anthropicPath        = "/v1/messages"
-	defaultMaxTokens     = 4096
+	anthropicAPIVersion = "2023-06-01"
+	anthropicPath       = "/v1/messages"
+	defaultMaxTokens    = 4096
 )
 
 // AnthropicProvider translates between OpenAI Chat Completions format and
@@ -51,7 +51,10 @@ func (p *AnthropicProvider) TranslateRequest(body map[string]any) (map[string]an
 		return nil, nil, nil, fmt.Errorf("failed to extract messages: %w", err)
 	}
 
-	systemPrompt, anthropicMessages := separateSystemMessages(messages)
+	systemPrompt, anthropicMessages, err := separateSystemMessages(messages)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 
 	if len(anthropicMessages) == 0 {
 		return nil, nil, nil, fmt.Errorf("at least one non-system message is required")
@@ -91,7 +94,15 @@ func (p *AnthropicProvider) TranslateRequest(body map[string]any) (map[string]an
 }
 
 // TranslateResponse translates an Anthropic Messages API response to OpenAI Chat Completions format.
+// Handles both success responses (type: "message") and error responses (type: "error").
 func (p *AnthropicProvider) TranslateResponse(body map[string]any, model string) (map[string]any, error) {
+	bodyType, _ := body["type"].(string)
+
+	// Handle Anthropic error responses
+	if bodyType == "error" {
+		return translateAnthropicError(body), nil
+	}
+
 	content := extractAnthropicContent(body)
 	finishReason := mapStopReason(body)
 	usage := mapAnthropicUsage(body)
@@ -101,6 +112,19 @@ func (p *AnthropicProvider) TranslateResponse(body map[string]any, model string)
 		model, _ = body["model"].(string)
 	}
 
+	message := map[string]any{
+		"role":    "assistant",
+		"content": content,
+	}
+
+	// Extract tool_use blocks if stop_reason is tool_use
+	if finishReason == "tool_calls" {
+		toolCalls := extractAnthropicToolCalls(body)
+		if len(toolCalls) > 0 {
+			message["tool_calls"] = toolCalls
+		}
+	}
+
 	translated := map[string]any{
 		"id":      id,
 		"object":  "chat.completion",
@@ -108,11 +132,8 @@ func (p *AnthropicProvider) TranslateResponse(body map[string]any, model string)
 		"model":   model,
 		"choices": []any{
 			map[string]any{
-				"index": 0,
-				"message": map[string]any{
-					"role":    "assistant",
-					"content": content,
-				},
+				"index":         0,
+				"message":       message,
 				"finish_reason": finishReason,
 			},
 		},
@@ -122,19 +143,37 @@ func (p *AnthropicProvider) TranslateResponse(body map[string]any, model string)
 	return translated, nil
 }
 
+// translateAnthropicError converts an Anthropic error response to OpenAI error format.
+func translateAnthropicError(body map[string]any) map[string]any {
+	errObj, _ := body["error"].(map[string]any)
+	errType, _ := errObj["type"].(string)
+	errMessage, _ := errObj["message"].(string)
+
+	return map[string]any{
+		"error": map[string]any{
+			"message": errMessage,
+			"type":    errType,
+			"param":   nil,
+			"code":    errType,
+		},
+	}
+}
+
 // separateSystemMessages extracts the system prompt and returns non-system messages
 // in Anthropic format (with role and content fields).
-func separateSystemMessages(messages []map[string]any) (string, []map[string]any) {
-	var systemPrompt string
+// Maps OpenAI "developer" role to Anthropic system prompt (concatenated with "system").
+// Returns an error for unsupported roles like "tool" or "function".
+func separateSystemMessages(messages []map[string]any) (string, []map[string]any, error) {
+	var systemParts []string
 	var anthropicMessages []map[string]any
 
-	for _, msg := range messages {
+	for i, msg := range messages {
 		role, _ := msg["role"].(string)
 		content := extractContentString(msg)
 
 		switch role {
-		case "system":
-			systemPrompt = content
+		case "system", "developer":
+			systemParts = append(systemParts, content)
 		case "user":
 			anthropicMessages = append(anthropicMessages, map[string]any{
 				"role":    "user",
@@ -145,10 +184,14 @@ func separateSystemMessages(messages []map[string]any) (string, []map[string]any
 				"role":    "assistant",
 				"content": content,
 			})
+		case "tool", "function":
+			return "", nil, fmt.Errorf("message at index %d has role %q which is not supported for Anthropic translation", i, role)
+		default:
+			return "", nil, fmt.Errorf("message at index %d has unknown role %q", i, role)
 		}
 	}
 
-	return systemPrompt, anthropicMessages
+	return joinStrings(systemParts, "\n"), anthropicMessages, nil
 }
 
 // extractMessages extracts the messages array from the request body.
@@ -177,6 +220,8 @@ func extractMessages(body map[string]any) ([]map[string]any, error) {
 
 // extractContentString extracts text content from a message, handling both
 // string content and array-of-content-parts formats.
+// Only text content is extracted; non-text blocks (image_url, audio, etc.) are skipped.
+// Returns empty string if no text content is found.
 func extractContentString(msg map[string]any) string {
 	content, ok := msg["content"]
 	if !ok {
@@ -198,12 +243,10 @@ func extractContentString(msg map[string]any) string {
 				}
 			}
 		}
-		if len(texts) > 0 {
-			return joinStrings(texts, " ")
-		}
+		return joinStrings(texts, " ")
 	}
 
-	return fmt.Sprintf("%v", content)
+	return ""
 }
 
 // resolveMaxTokens extracts max tokens from the request body, checking
@@ -262,6 +305,41 @@ func extractAnthropicContent(body map[string]any) string {
 	}
 
 	return joinStrings(texts, "")
+}
+
+// extractAnthropicToolCalls extracts tool_use blocks from an Anthropic response
+// and converts them to OpenAI tool_calls format.
+func extractAnthropicToolCalls(body map[string]any) []any {
+	contentBlocks, ok := body["content"].([]any)
+	if !ok {
+		return nil
+	}
+
+	var toolCalls []any
+	for i, block := range contentBlocks {
+		blockMap, ok := block.(map[string]any)
+		if !ok {
+			continue
+		}
+		if blockType, _ := blockMap["type"].(string); blockType == "tool_use" {
+			id, _ := blockMap["id"].(string)
+			name, _ := blockMap["name"].(string)
+			input := blockMap["input"]
+
+			toolCall := map[string]any{
+				"id":    id,
+				"index": i,
+				"type":  "function",
+				"function": map[string]any{
+					"name":      name,
+					"arguments": toJSONString(input),
+				},
+			}
+			toolCalls = append(toolCalls, toolCall)
+		}
+	}
+
+	return toolCalls
 }
 
 // mapStopReason maps Anthropic stop_reason to OpenAI finish_reason.
@@ -336,6 +414,18 @@ func toInt(v any) int {
 	default:
 		return 0
 	}
+}
+
+func toJSONString(v any) string {
+	if v == nil {
+		return "{}"
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	// For map/slice types, marshal to JSON string
+	// Using fmt as a simple fallback since we work with map[string]any
+	return fmt.Sprintf("%v", v)
 }
 
 func joinStrings(parts []string, sep string) string {

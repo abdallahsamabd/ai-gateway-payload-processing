@@ -195,8 +195,18 @@ func TestDetectProviderFromResponse(t *testing.T) {
 			expected: "anthropic",
 		},
 		{
+			name:     "anthropic error",
+			body:     map[string]any{"type": "error", "error": map[string]any{"type": "invalid_request_error"}},
+			expected: "anthropic",
+		},
+		{
 			name:     "openai completion",
 			body:     map[string]any{"object": "chat.completion"},
+			expected: "openai",
+		},
+		{
+			name:     "openai error",
+			body:     map[string]any{"error": map[string]any{"message": "bad request"}},
 			expected: "openai",
 		},
 		{

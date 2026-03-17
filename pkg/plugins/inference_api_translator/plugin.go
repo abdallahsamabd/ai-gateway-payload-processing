@@ -155,12 +155,18 @@ func (p *InferenceAPITranslatorPlugin) ProcessResponse(ctx context.Context, resp
 }
 
 // detectProviderFromResponse identifies the provider from the response body structure.
-// Anthropic responses have type="message"; OpenAI responses have object="chat.completion".
+// Anthropic success responses have type="message"; error responses have type="error".
+// OpenAI responses have object="chat.completion"; errors have a top-level "error" key.
 func detectProviderFromResponse(body map[string]any) string {
-	if bodyType, ok := body["type"].(string); ok && bodyType == "message" {
-		return "anthropic"
+	if bodyType, ok := body["type"].(string); ok {
+		if bodyType == "message" || bodyType == "error" {
+			return "anthropic"
+		}
 	}
-	if obj, ok := body["object"].(string); ok && obj == "chat.completion" {
+	if _, ok := body["object"].(string); ok {
+		return "openai"
+	}
+	if _, ok := body["error"]; ok {
 		return "openai"
 	}
 	return ""
