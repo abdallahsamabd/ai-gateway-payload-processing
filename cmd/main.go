@@ -29,8 +29,9 @@ import (
 	"sigs.k8s.io/gateway-api-inference-extension/cmd/bbr/runner"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/bbr/framework"
 
-	api_translation "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api_translation"
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins"
+	api_translation "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api_translation"
+	provider_resolver "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/provider_resolver"
 )
 
 func main() {
@@ -46,5 +47,6 @@ func main() {
 
 func registerPlugins() {
 	framework.Register(plugins.ExamplePluginType, plugins.ExamplePluginFactory) // example plugin, can be removed later
+	framework.Register(provider_resolver.PluginType, provider_resolver.Factory)
 	framework.Register(api_translation.PluginType, api_translation.Factory)
 }
