@@ -29,7 +29,6 @@ import (
 )
 
 const (
-	// ProviderResolverPluginType is the unique identifier for this plugin, used in CLI flags and registry.
 	ProviderResolverPluginType = "provider-resolver"
 )
 
@@ -111,11 +110,11 @@ func (p *ProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleState 
 		return nil
 	}
 
-	cycleState.Write(state.ProviderKey, info.Provider)
+	cycleState.Write(state.ProviderKey, info.provider)
 
-	if info.CredentialRefName != "" {
-		cycleState.Write(state.CredsRefName, info.CredentialRefName)
-		cycleState.Write(state.CredsRefNamespace, info.CredentialRefNamespace)
+	if info.credentialRefName != "" {
+		cycleState.Write(state.CredsRefName, info.credentialRefName)
+		cycleState.Write(state.CredsRefNamespace, info.credentialRefNamespace)
 	}
 
 	return nil

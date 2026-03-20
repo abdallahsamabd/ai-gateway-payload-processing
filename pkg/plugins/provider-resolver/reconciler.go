@@ -71,17 +71,17 @@ func (r *maasModelRefReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	info := ModelInfo{
-		Provider: provider,
+		provider: provider,
 	}
 
 	// Extract spec.credentialRef if present
 	credName, _, _ := unstructured.NestedString(obj.Object, "spec", "credentialRef", "name")
 	credNS, _, _ := unstructured.NestedString(obj.Object, "spec", "credentialRef", "namespace")
 	if credName != "" {
-		info.CredentialRefName = credName
-		info.CredentialRefNamespace = credNS
-		if info.CredentialRefNamespace == "" {
-			info.CredentialRefNamespace = obj.GetNamespace()
+		info.credentialRefName = credName
+		info.credentialRefNamespace = credNS
+		if info.credentialRefNamespace == "" {
+			info.credentialRefNamespace = obj.GetNamespace()
 		}
 	}
 

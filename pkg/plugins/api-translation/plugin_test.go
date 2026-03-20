@@ -23,6 +23,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/bbr/framework"
+
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/external-model/state"
 )
 
 func newCycleState() *framework.CycleState {
@@ -30,9 +32,9 @@ func newCycleState() *framework.CycleState {
 	return cs
 }
 
-func newCycleStateWithProvider(provider string) *framework.CycleState {
+func newCycleStateWithProvider(providerName string) *framework.CycleState {
 	cs := framework.NewCycleState()
-	cs.Write("provider", provider)
+	cs.Write(state.ProviderKey, providerName)
 	return cs
 }
 
@@ -99,7 +101,8 @@ func TestProcessRequest_AnthropicProvider(t *testing.T) {
 	assert.Contains(t, removed, "content-length")
 
 	// Verify model stored in CycleState
-	model, _ := framework.ReadCycleStateKey[string](cs, "api-translation-model")
+	model, err := framework.ReadCycleStateKey[string](cs, state.ModelKey)
+	assert.NoError(t, err)
 	assert.Equal(t, "claude-sonnet-4-20250514", model)
 }
 
@@ -137,7 +140,7 @@ func TestProcessResponse_Anthropic(t *testing.T) {
 	p := NewAPITranslationPlugin()
 
 	cs := newCycleStateWithProvider("anthropic")
-	cs.Write("api-translation-model", "claude-sonnet-4-20250514")
+	cs.Write(state.ModelKey, "claude-sonnet-4-20250514")
 
 	resp := framework.NewInferenceResponse()
 	resp.Body["id"] = "msg_123"
@@ -195,7 +198,7 @@ func TestProcessResponse_AnthropicToolUse(t *testing.T) {
 	p := NewAPITranslationPlugin()
 
 	cs := newCycleStateWithProvider("anthropic")
-	cs.Write("api-translation-model", "claude-sonnet-4-20250514")
+	cs.Write(state.ModelKey, "claude-sonnet-4-20250514")
 
 	resp := framework.NewInferenceResponse()
 	resp.Body["id"] = "msg_456"

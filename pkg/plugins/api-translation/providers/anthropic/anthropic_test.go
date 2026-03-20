@@ -221,8 +221,8 @@ func TestTranslateRequest_ContentParts(t *testing.T) {
 
 func TestTranslateResponse_BasicCompletion(t *testing.T) {
 	body := map[string]any{
-		"id":   "msg_123",
-		"type": "message",
+		"id":    "msg_123",
+		"type":  "message",
 		"model": "claude-sonnet-4-20250514",
 		"content": []any{
 			map[string]any{"type": "text", "text": "The answer is 4."},

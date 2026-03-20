@@ -32,9 +32,9 @@ import (
 func TestProcessRequest_ModelResolved(t *testing.T) {
 	store := newModelStore()
 	store.setModel("claude-sonnet", ModelInfo{
-		Provider:               provider.Anthropic,
-		CredentialRefName:      "anthropic-key",
-		CredentialRefNamespace: "llm",
+		provider:               provider.Anthropic,
+		credentialRefName:      "anthropic-key",
+		credentialRefNamespace: "llm",
 	}, types.NamespacedName{Name: "claude-sonnet", Namespace: "llm"})
 
 	p := &ProviderResolverPlugin{store: store}
@@ -109,7 +109,7 @@ func TestProcessRequest_NilRequest(t *testing.T) {
 func TestProcessRequest_NoCredentialRef(t *testing.T) {
 	store := newModelStore()
 	store.setModel("gpt-4o", ModelInfo{
-		Provider: provider.OpenAI,
+		provider: provider.OpenAI,
 		// no credential ref
 	}, types.NamespacedName{Name: "gpt-4o", Namespace: "llm"})
 
@@ -132,18 +132,18 @@ func TestModelStore_SetAndGet(t *testing.T) {
 	store := newModelStore()
 	key := types.NamespacedName{Name: "test", Namespace: "ns"}
 
-	store.setModel("model-a", ModelInfo{Provider: provider.Anthropic}, key)
+	store.setModel("model-a", ModelInfo{provider: provider.Anthropic}, key)
 
 	info, found := store.getProvider("model-a")
 	assert.True(t, found)
-	assert.Equal(t, provider.Anthropic, info.Provider)
+	assert.Equal(t, provider.Anthropic, info.provider)
 }
 
 func TestModelStore_DeleteByResource(t *testing.T) {
 	store := newModelStore()
 	key := types.NamespacedName{Name: "test", Namespace: "ns"}
 
-	store.setModel("model-a", ModelInfo{Provider: provider.Anthropic}, key)
+	store.setModel("model-a", ModelInfo{provider: provider.Anthropic}, key)
 	store.deleteByResource(key)
 
 	_, found := store.getProvider("model-a")
