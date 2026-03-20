@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package providerresolver
+package provider_resolver
 
 import (
 	"context"
@@ -31,10 +31,6 @@ import (
 const (
 	// ProviderResolverPluginType is the unique identifier for this plugin, used in CLI flags and registry.
 	ProviderResolverPluginType = "provider-resolver"
-
-	// CycleState keys written by this plugin
-	cycleStateCredRefNameKey      = "credential-ref-name"
-	cycleStateCredRefNamespaceKey = "credential-ref-namespace"
 )
 
 // maasModelRefGVK is the GroupVersionKind for MaaSModelRef CRD.
@@ -118,8 +114,8 @@ func (p *ProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleState 
 	cycleState.Write(state.ProviderKey, info.Provider)
 
 	if info.CredentialRefName != "" {
-		cycleState.Write(cycleStateCredRefNameKey, info.CredentialRefName)
-		cycleState.Write(cycleStateCredRefNamespaceKey, info.CredentialRefNamespace)
+		cycleState.Write(state.CredsRefName, info.CredentialRefName)
+		cycleState.Write(state.CredsRefNamespace, info.CredentialRefNamespace)
 	}
 
 	return nil

@@ -81,8 +81,8 @@ func (p *APITranslationPlugin) ProcessRequest(ctx context.Context, cycleState *f
 		return fmt.Errorf("invalid inference request: request/headers/body must be non-nil")
 	}
 
-	providerName, _ := framework.ReadCycleStateKey[string](cycleState, state.ProviderKey)
-	if providerName == "" || providerName == "openai" {
+	providerName, err := framework.ReadCycleStateKey[string](cycleState, state.ProviderKey) // err if not found
+	if err != nil || providerName == "" || providerName == "openai" {                       // empty provider means no translation needed
 		return nil
 	}
 
