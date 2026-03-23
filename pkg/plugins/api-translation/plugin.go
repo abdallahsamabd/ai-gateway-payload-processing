@@ -24,12 +24,12 @@ import (
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/bbr/framework"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/framework/interface/plugin"
 
-	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/external-model/provider"
-	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/external-model/state"
-	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/providers"
-	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/providers/anthropic"
-	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/providers/azureopenai"
-	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/providers/vertex"
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator"
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator/anthropic"
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator/azureopenai"
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator/vertex"
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/common/provider"
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/common/state"
 )
 
 const (
@@ -52,10 +52,10 @@ func NewAPITranslationPlugin() *APITranslationPlugin {
 			Type: APITranslationPluginType,
 			Name: APITranslationPluginType,
 		},
-		providers: map[string]providers.Provider{
-			provider.Anthropic:   anthropic.NewAnthropicProvider(),
-			provider.AzureOpenAI: azureopenai.NewAzureOpenAIProvider(),
-			provider.Vertex:      vertex.NewVertexProvider(),
+		providers: map[string]translator.Translator{
+			provider.Anthropic:   anthropic.NewAnthropicTranslator(),
+			provider.AzureOpenAI: azureopenai.NewAzureOpenAITranslator(),
+			provider.Vertex:      vertex.NewVertexTranslator(),
 		},
 	}
 }
@@ -64,7 +64,7 @@ func NewAPITranslationPlugin() *APITranslationPlugin {
 // OpenAI Chat Completions format and provider-native formats (e.g., Anthropic Messages API).
 type APITranslationPlugin struct {
 	typedName plugin.TypedName
-	providers map[string]providers.Provider
+	providers map[string]translator.Translator // map from provider name to translator interface
 }
 
 // TypedName returns the type and name tuple of this plugin instance.
@@ -134,14 +134,14 @@ func (p *APITranslationPlugin) ProcessResponse(ctx context.Context, cycleState *
 
 	translator, ok := p.providers[providerName]
 	if !ok {
-		return nil
+		return fmt.Errorf("unsupported provider - '%s'", providerName)
 	}
 
 	model, _ := framework.ReadCycleStateKey[string](cycleState, state.ModelKey)
 
 	translatedBody, err := translator.TranslateResponse(response.Body, model)
 	if err != nil {
-		return fmt.Errorf("response translation failed for provider %q: %w", providerName, err)
+		return fmt.Errorf("response translation failed for provider '%s' - %w", providerName, err)
 	}
 
 	if translatedBody != nil {

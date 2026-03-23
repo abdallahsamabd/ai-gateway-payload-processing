@@ -32,7 +32,7 @@ func TestTranslateRequest_BasicChat(t *testing.T) {
 		},
 	}
 
-	translatedBody, headers, headersToRemove, err := NewAzureOpenAIProvider().TranslateRequest(body)
+	translatedBody, headers, headersToRemove, err := NewAzureOpenAITranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	assert.Nil(t, translatedBody, "body should not be mutated for Azure OpenAI")
@@ -61,7 +61,7 @@ func TestTranslateRequest_ModelUsedAsDeploymentID(t *testing.T) {
 				"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
 			}
 
-			_, headers, _, err := NewAzureOpenAIProvider().TranslateRequest(body)
+			_, headers, _, err := NewAzureOpenAITranslator().TranslateRequest(body)
 			require.NoError(t, err)
 
 			expectedPath := fmt.Sprintf("/openai/deployments/%s/chat/completions?api-version=%s", tt.model, defaultAPIVersion)
@@ -75,7 +75,7 @@ func TestTranslateRequest_MissingModel(t *testing.T) {
 		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
 	}
 
-	_, _, _, err := NewAzureOpenAIProvider().TranslateRequest(body)
+	_, _, _, err := NewAzureOpenAITranslator().TranslateRequest(body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "model")
 }
@@ -86,7 +86,7 @@ func TestTranslateRequest_EmptyModel(t *testing.T) {
 		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
 	}
 
-	_, _, _, err := NewAzureOpenAIProvider().TranslateRequest(body)
+	_, _, _, err := NewAzureOpenAITranslator().TranslateRequest(body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "model")
 }
@@ -111,7 +111,7 @@ func TestTranslateRequest_InvalidModelCharacters(t *testing.T) {
 				"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
 			}
 
-			_, _, _, err := NewAzureOpenAIProvider().TranslateRequest(body)
+			_, _, _, err := NewAzureOpenAITranslator().TranslateRequest(body)
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), "invalid characters")
 		})
@@ -136,14 +136,14 @@ func TestTranslateRequest_ValidModelCharacters(t *testing.T) {
 				"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
 			}
 
-			_, _, _, err := NewAzureOpenAIProvider().TranslateRequest(body)
+			_, _, _, err := NewAzureOpenAITranslator().TranslateRequest(body)
 			assert.NoError(t, err)
 		})
 	}
 }
 
 func TestTranslateRequest_defaultAPIVersion(t *testing.T) {
-	p := NewAzureOpenAIProvider()
+	p := NewAzureOpenAITranslator()
 	assert.Equal(t, defaultAPIVersion, p.apiVersion)
 }
 
@@ -164,7 +164,7 @@ func TestTranslateRequest_BodyPassthrough(t *testing.T) {
 		"frequency_penalty": 0.3,
 	}
 
-	translatedBody, _, _, err := NewAzureOpenAIProvider().TranslateRequest(body)
+	translatedBody, _, _, err := NewAzureOpenAITranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	assert.Nil(t, translatedBody, "Azure OpenAI should not mutate the request body")
@@ -176,7 +176,7 @@ func TestTranslateRequest_HeadersSet(t *testing.T) {
 		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
 	}
 
-	_, headers, _, err := NewAzureOpenAIProvider().TranslateRequest(body)
+	_, headers, _, err := NewAzureOpenAITranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	assert.Len(t, headers, 2)
@@ -190,7 +190,7 @@ func TestTranslateRequest_HeadersRemoved(t *testing.T) {
 		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
 	}
 
-	_, _, headersToRemove, err := NewAzureOpenAIProvider().TranslateRequest(body)
+	_, _, headersToRemove, err := NewAzureOpenAITranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	assert.Empty(t, headersToRemove)
@@ -219,7 +219,7 @@ func TestTranslateResponse_Passthrough(t *testing.T) {
 		},
 	}
 
-	translatedBody, err := NewAzureOpenAIProvider().TranslateResponse(body, "gpt-4o")
+	translatedBody, err := NewAzureOpenAITranslator().TranslateResponse(body, "gpt-4o")
 	require.NoError(t, err)
 	assert.Nil(t, translatedBody, "Azure OpenAI response should not be mutated — already in OpenAI format")
 }
@@ -227,7 +227,7 @@ func TestTranslateResponse_Passthrough(t *testing.T) {
 func TestTranslateResponse_EmptyBody(t *testing.T) {
 	body := map[string]any{}
 
-	translatedBody, err := NewAzureOpenAIProvider().TranslateResponse(body, "gpt-4o")
+	translatedBody, err := NewAzureOpenAITranslator().TranslateResponse(body, "gpt-4o")
 	require.NoError(t, err)
 	assert.Nil(t, translatedBody)
 }
@@ -241,7 +241,7 @@ func TestTranslateResponse_ErrorPassthrough(t *testing.T) {
 		},
 	}
 
-	translatedBody, err := NewAzureOpenAIProvider().TranslateResponse(body, "gpt-4o")
+	translatedBody, err := NewAzureOpenAITranslator().TranslateResponse(body, "gpt-4o")
 	require.NoError(t, err)
 	assert.Nil(t, translatedBody, "Azure error responses are already in OpenAI format")
 }
@@ -263,7 +263,7 @@ func TestTranslateResponse_StreamingChunkPassthrough(t *testing.T) {
 		},
 	}
 
-	translatedBody, err := NewAzureOpenAIProvider().TranslateResponse(body, "gpt-4o")
+	translatedBody, err := NewAzureOpenAITranslator().TranslateResponse(body, "gpt-4o")
 	require.NoError(t, err)
 	assert.Nil(t, translatedBody)
 }

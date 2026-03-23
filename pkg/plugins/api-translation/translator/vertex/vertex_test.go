@@ -35,7 +35,7 @@ func TestTranslateRequest_BasicChat(t *testing.T) {
 		},
 	}
 
-	translated, headers, headersToRemove, err := NewVertexProvider().TranslateRequest(body)
+	translated, headers, headersToRemove, err := NewVertexTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	contents := translated["contents"].([]map[string]any)
@@ -63,7 +63,7 @@ func TestTranslateRequest_SystemMessage(t *testing.T) {
 		},
 	}
 
-	translated, _, _, err := NewVertexProvider().TranslateRequest(body)
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	sysInstruction := translated["systemInstruction"].(map[string]any)
@@ -86,7 +86,7 @@ func TestTranslateRequest_MultipleMessages(t *testing.T) {
 		},
 	}
 
-	translated, _, _, err := NewVertexProvider().TranslateRequest(body)
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	contents := translated["contents"].([]map[string]any)
@@ -108,7 +108,7 @@ func TestTranslateRequest_DeveloperRole(t *testing.T) {
 		},
 	}
 
-	translated, _, _, err := NewVertexProvider().TranslateRequest(body)
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	sysInstruction := translated["systemInstruction"].(map[string]any)
@@ -127,7 +127,7 @@ func TestTranslateRequest_SystemAndDeveloperConcatenated(t *testing.T) {
 		},
 	}
 
-	translated, _, _, err := NewVertexProvider().TranslateRequest(body)
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	sysInstruction := translated["systemInstruction"].(map[string]any)
@@ -147,7 +147,7 @@ func TestTranslateRequest_OptionalParams(t *testing.T) {
 		"max_tokens":  float64(500),
 	}
 
-	translated, _, _, err := NewVertexProvider().TranslateRequest(body)
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	config := translated["generationConfig"].(map[string]any)
@@ -194,7 +194,7 @@ func TestTranslateRequest_MaxTokens(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			translated, _, _, err := NewVertexProvider().TranslateRequest(tt.body)
+			translated, _, _, err := NewVertexTranslator().TranslateRequest(tt.body)
 			require.NoError(t, err)
 
 			config, hasConfig := translated["generationConfig"].(map[string]any)
@@ -218,7 +218,7 @@ func TestTranslateRequest_StopString(t *testing.T) {
 		"stop":     "END",
 	}
 
-	translated, _, _, err := NewVertexProvider().TranslateRequest(body)
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	config := translated["generationConfig"].(map[string]any)
@@ -249,7 +249,7 @@ func TestTranslateRequest_InvalidModelCharacters(t *testing.T) {
 				"model":    tt.model,
 				"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
 			}
-			_, _, _, err := NewVertexProvider().TranslateRequest(body)
+			_, _, _, err := NewVertexTranslator().TranslateRequest(body)
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), "invalid characters")
 		})
@@ -274,7 +274,7 @@ func TestTranslateRequest_ValidModelNames(t *testing.T) {
 				"model":    tt.model,
 				"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
 			}
-			_, _, _, err := NewVertexProvider().TranslateRequest(body)
+			_, _, _, err := NewVertexTranslator().TranslateRequest(body)
 			assert.NoError(t, err)
 		})
 	}
@@ -285,7 +285,7 @@ func TestTranslateRequest_MissingModel(t *testing.T) {
 		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
 	}
 
-	_, _, _, err := NewVertexProvider().TranslateRequest(body)
+	_, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "model")
 }
@@ -295,7 +295,7 @@ func TestTranslateRequest_MissingMessages(t *testing.T) {
 		"model": "gemini-2.5-flash",
 	}
 
-	_, _, _, err := NewVertexProvider().TranslateRequest(body)
+	_, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "messages")
 }
@@ -306,7 +306,7 @@ func TestTranslateRequest_EmptyMessagesArray(t *testing.T) {
 		"messages": []any{},
 	}
 
-	_, _, _, err := NewVertexProvider().TranslateRequest(body)
+	_, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "non-system message")
 }
@@ -319,7 +319,7 @@ func TestTranslateRequest_OnlySystemMessage(t *testing.T) {
 		},
 	}
 
-	_, _, _, err := NewVertexProvider().TranslateRequest(body)
+	_, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "non-system message")
 }
@@ -333,7 +333,7 @@ func TestTranslateRequest_ToolRoleRejected(t *testing.T) {
 		},
 	}
 
-	_, _, _, err := NewVertexProvider().TranslateRequest(body)
+	_, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "tool")
 	assert.Contains(t, err.Error(), "not supported")
@@ -347,7 +347,7 @@ func TestTranslateRequest_FunctionRoleRejected(t *testing.T) {
 		},
 	}
 
-	_, _, _, err := NewVertexProvider().TranslateRequest(body)
+	_, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "function")
 	assert.Contains(t, err.Error(), "not supported")
@@ -361,7 +361,7 @@ func TestTranslateRequest_UnknownRoleRejected(t *testing.T) {
 		},
 	}
 
-	_, _, _, err := NewVertexProvider().TranslateRequest(body)
+	_, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown role")
 }
@@ -380,7 +380,7 @@ func TestTranslateRequest_ContentParts(t *testing.T) {
 		},
 	}
 
-	translated, _, _, err := NewVertexProvider().TranslateRequest(body)
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	contents := translated["contents"].([]map[string]any)
@@ -396,7 +396,7 @@ func TestTranslateRequest_EmptyContentString(t *testing.T) {
 		},
 	}
 
-	translated, _, _, err := NewVertexProvider().TranslateRequest(body)
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	contents := translated["contents"].([]map[string]any)
@@ -410,7 +410,7 @@ func TestTranslateRequest_PathIncludesModel(t *testing.T) {
 		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
 	}
 
-	_, headers, _, err := NewVertexProvider().TranslateRequest(body)
+	_, headers, _, err := NewVertexTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 	assert.Equal(t, "/v1beta/models/gemini-2.0-flash-001:generateContent", headers[":path"])
 }
@@ -421,7 +421,7 @@ func TestTranslateRequest_NoGenerationConfigWhenNoParams(t *testing.T) {
 		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
 	}
 
-	translated, _, _, err := NewVertexProvider().TranslateRequest(body)
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	_, hasConfig := translated["generationConfig"]
@@ -442,7 +442,7 @@ func TestTranslateRequest_NonTextContentSkipped(t *testing.T) {
 		},
 	}
 
-	translated, _, _, err := NewVertexProvider().TranslateRequest(body)
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	contents := translated["contents"].([]map[string]any)
@@ -455,7 +455,7 @@ func TestTranslateRequest_MessagesNotArray(t *testing.T) {
 		"model":    "gemini-2.5-flash",
 		"messages": "not-an-array",
 	}
-	_, _, _, err := NewVertexProvider().TranslateRequest(body)
+	_, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "messages must be an array")
 }
@@ -465,7 +465,7 @@ func TestTranslateRequest_MessageNotObject(t *testing.T) {
 		"model":    "gemini-2.5-flash",
 		"messages": []any{"not-a-map"},
 	}
-	_, _, _, err := NewVertexProvider().TranslateRequest(body)
+	_, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not an object")
 }
@@ -477,7 +477,7 @@ func TestTranslateRequest_ContentNonStringNonArray(t *testing.T) {
 			map[string]any{"role": "user", "content": 42},
 		},
 	}
-	translated, _, _, err := NewVertexProvider().TranslateRequest(body)
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	contents := translated["contents"].([]map[string]any)
@@ -492,7 +492,7 @@ func TestTranslateRequest_ContentKeyMissing(t *testing.T) {
 			map[string]any{"role": "user"},
 		},
 	}
-	translated, _, _, err := NewVertexProvider().TranslateRequest(body)
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	contents := translated["contents"].([]map[string]any)
@@ -506,7 +506,7 @@ func TestTranslateRequest_StopNonStringNonArray(t *testing.T) {
 		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
 		"stop":     12345,
 	}
-	translated, _, _, err := NewVertexProvider().TranslateRequest(body)
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	_, hasConfig := translated["generationConfig"]
@@ -538,7 +538,7 @@ func TestTranslateResponse_BasicCompletion(t *testing.T) {
 		},
 	}
 
-	translated, err := NewVertexProvider().TranslateResponse(body, "gemini-2.5-flash")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "gemini-2.5-flash")
 	require.NoError(t, err)
 
 	assert.Equal(t, "resp_123", translated["id"])
@@ -603,7 +603,7 @@ func TestTranslateResponse_FinishReasons(t *testing.T) {
 				},
 			}
 
-			translated, err := NewVertexProvider().TranslateResponse(body, "test")
+			translated, err := NewVertexTranslator().TranslateResponse(body, "test")
 			require.NoError(t, err)
 
 			choices := translated["choices"].([]any)
@@ -628,7 +628,7 @@ func TestTranslateResponse_MultipleCandidates(t *testing.T) {
 		"usageMetadata": map[string]any{"promptTokenCount": float64(5), "candidatesTokenCount": float64(10), "totalTokenCount": float64(15)},
 	}
 
-	translated, err := NewVertexProvider().TranslateResponse(body, "gemini-2.5-flash")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "gemini-2.5-flash")
 	require.NoError(t, err)
 
 	choices := translated["choices"].([]any)
@@ -650,7 +650,7 @@ func TestTranslateResponse_MultipleContentParts(t *testing.T) {
 		"usageMetadata": map[string]any{"promptTokenCount": float64(1), "candidatesTokenCount": float64(2), "totalTokenCount": float64(3)},
 	}
 
-	translated, err := NewVertexProvider().TranslateResponse(body, "test")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "test")
 	require.NoError(t, err)
 
 	msg := translated["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)
@@ -669,7 +669,7 @@ func TestTranslateResponse_ModelFromBody(t *testing.T) {
 		"usageMetadata": map[string]any{"promptTokenCount": float64(1), "candidatesTokenCount": float64(1), "totalTokenCount": float64(2)},
 	}
 
-	translated, err := NewVertexProvider().TranslateResponse(body, "")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "")
 	require.NoError(t, err)
 	assert.Equal(t, "gemini-2.5-flash", translated["model"])
 }
@@ -686,7 +686,7 @@ func TestTranslateResponse_ModelFromParam(t *testing.T) {
 		"usageMetadata": map[string]any{"promptTokenCount": float64(1), "candidatesTokenCount": float64(1), "totalTokenCount": float64(2)},
 	}
 
-	translated, err := NewVertexProvider().TranslateResponse(body, "my-model")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "my-model")
 	require.NoError(t, err)
 	assert.Equal(t, "my-model", translated["model"])
 }
@@ -701,7 +701,7 @@ func TestTranslateResponse_MissingUsage(t *testing.T) {
 		},
 	}
 
-	translated, err := NewVertexProvider().TranslateResponse(body, "test")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "test")
 	require.NoError(t, err)
 
 	usage := translated["usage"].(map[string]any)
@@ -715,7 +715,7 @@ func TestTranslateResponse_NoCandidates(t *testing.T) {
 		"usageMetadata": map[string]any{"promptTokenCount": float64(5), "totalTokenCount": float64(5)},
 	}
 
-	translated, err := NewVertexProvider().TranslateResponse(body, "test")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "test")
 	require.NoError(t, err)
 
 	choices := translated["choices"].([]any)
@@ -728,7 +728,7 @@ func TestTranslateResponse_EmptyCandidatesArray(t *testing.T) {
 		"usageMetadata": map[string]any{"promptTokenCount": float64(5), "totalTokenCount": float64(5)},
 	}
 
-	translated, err := NewVertexProvider().TranslateResponse(body, "test")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "test")
 	require.NoError(t, err)
 
 	choices := translated["choices"].([]any)
@@ -744,7 +744,7 @@ func TestTranslateResponse_VertexError(t *testing.T) {
 		},
 	}
 
-	translated, err := NewVertexProvider().TranslateResponse(body, "gemini-2.5-flash")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "gemini-2.5-flash")
 	require.NoError(t, err)
 
 	errObj := translated["error"].(map[string]any)
@@ -760,7 +760,7 @@ func TestTranslateResponse_VertexError_NilCode(t *testing.T) {
 			"status":  "INTERNAL",
 		},
 	}
-	translated, err := NewVertexProvider().TranslateResponse(body, "test")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "test")
 	require.NoError(t, err)
 
 	errObj := translated["error"].(map[string]any)
@@ -777,7 +777,7 @@ func TestTranslateResponse_VertexError_404(t *testing.T) {
 		},
 	}
 
-	translated, err := NewVertexProvider().TranslateResponse(body, "test")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "test")
 	require.NoError(t, err)
 
 	errObj := translated["error"].(map[string]any)
@@ -795,7 +795,7 @@ func TestTranslateResponse_VertexError_429(t *testing.T) {
 		},
 	}
 
-	translated, err := NewVertexProvider().TranslateResponse(body, "test")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "test")
 	require.NoError(t, err)
 
 	errObj := translated["error"].(map[string]any)
@@ -825,7 +825,7 @@ func TestTranslateResponse_FunctionCall(t *testing.T) {
 		"usageMetadata": map[string]any{"promptTokenCount": float64(20), "candidatesTokenCount": float64(15), "totalTokenCount": float64(35)},
 	}
 
-	translated, err := NewVertexProvider().TranslateResponse(body, "gemini-2.5-flash")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "gemini-2.5-flash")
 	require.NoError(t, err)
 
 	choices := translated["choices"].([]any)
@@ -864,7 +864,7 @@ func TestTranslateResponse_MultipleFunctionCalls(t *testing.T) {
 		"usageMetadata": map[string]any{"promptTokenCount": float64(10), "candidatesTokenCount": float64(20), "totalTokenCount": float64(30)},
 	}
 
-	translated, err := NewVertexProvider().TranslateResponse(body, "gemini-2.5-flash")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "gemini-2.5-flash")
 	require.NoError(t, err)
 
 	msg := translated["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)
@@ -888,7 +888,7 @@ func TestTranslateResponse_FunctionCallStringArgs(t *testing.T) {
 		}},
 		"usageMetadata": map[string]any{"promptTokenCount": float64(1), "candidatesTokenCount": float64(1), "totalTokenCount": float64(2)},
 	}
-	translated, err := NewVertexProvider().TranslateResponse(body, "test")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "test")
 	require.NoError(t, err)
 
 	tc := translated["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)["tool_calls"].([]any)[0].(map[string]any)
@@ -906,7 +906,7 @@ func TestTranslateResponse_FunctionCallNilArgs(t *testing.T) {
 		}},
 		"usageMetadata": map[string]any{"promptTokenCount": float64(1), "candidatesTokenCount": float64(1), "totalTokenCount": float64(2)},
 	}
-	translated, err := NewVertexProvider().TranslateResponse(body, "test")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "test")
 	require.NoError(t, err)
 
 	tc := translated["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)["tool_calls"].([]any)[0].(map[string]any)
@@ -924,7 +924,7 @@ func TestTranslateResponse_FunctionCallUnmarshalableArgs(t *testing.T) {
 		}},
 		"usageMetadata": map[string]any{"promptTokenCount": float64(1), "candidatesTokenCount": float64(1), "totalTokenCount": float64(2)},
 	}
-	translated, err := NewVertexProvider().TranslateResponse(body, "test")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "test")
 	require.NoError(t, err)
 
 	msg := translated["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)
@@ -936,7 +936,7 @@ func TestTranslateResponse_CandidateNotMap(t *testing.T) {
 		"candidates":    []any{"not-a-map"},
 		"usageMetadata": map[string]any{"promptTokenCount": float64(1), "candidatesTokenCount": float64(1), "totalTokenCount": float64(2)},
 	}
-	translated, err := NewVertexProvider().TranslateResponse(body, "test")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "test")
 	require.NoError(t, err)
 
 	choices := translated["choices"].([]any)
@@ -948,7 +948,7 @@ func TestTranslateResponse_CandidateNoContent(t *testing.T) {
 		"candidates":    []any{map[string]any{"finishReason": "STOP"}},
 		"usageMetadata": map[string]any{"promptTokenCount": float64(1), "candidatesTokenCount": float64(1), "totalTokenCount": float64(2)},
 	}
-	translated, err := NewVertexProvider().TranslateResponse(body, "test")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "test")
 	require.NoError(t, err)
 
 	msg := translated["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)
@@ -964,7 +964,7 @@ func TestTranslateResponse_PartsNotArray(t *testing.T) {
 		}},
 		"usageMetadata": map[string]any{"promptTokenCount": float64(1), "candidatesTokenCount": float64(1), "totalTokenCount": float64(2)},
 	}
-	translated, err := NewVertexProvider().TranslateResponse(body, "test")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "test")
 	require.NoError(t, err)
 
 	msg := translated["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)
@@ -979,7 +979,7 @@ func TestTranslateResponse_PartNotMap(t *testing.T) {
 		}},
 		"usageMetadata": map[string]any{"promptTokenCount": float64(1), "candidatesTokenCount": float64(1), "totalTokenCount": float64(2)},
 	}
-	translated, err := NewVertexProvider().TranslateResponse(body, "test")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "test")
 	require.NoError(t, err)
 
 	msg := translated["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)
@@ -990,9 +990,9 @@ func TestTranslateResponse_UnknownFieldsIgnored(t *testing.T) {
 	body := map[string]any{
 		"candidates": []any{
 			map[string]any{
-				"content":      map[string]any{"parts": []any{map[string]any{"text": "hi"}}, "role": "model"},
-				"finishReason": "STOP",
-				"safetyRatings": []any{map[string]any{"category": "HARM_CATEGORY_HARASSMENT", "probability": "NEGLIGIBLE"}},
+				"content":          map[string]any{"parts": []any{map[string]any{"text": "hi"}}, "role": "model"},
+				"finishReason":     "STOP",
+				"safetyRatings":    []any{map[string]any{"category": "HARM_CATEGORY_HARASSMENT", "probability": "NEGLIGIBLE"}},
 				"citationMetadata": map[string]any{},
 			},
 		},
@@ -1007,7 +1007,7 @@ func TestTranslateResponse_UnknownFieldsIgnored(t *testing.T) {
 		"responseId":   "abc123",
 	}
 
-	translated, err := NewVertexProvider().TranslateResponse(body, "test")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "test")
 	require.NoError(t, err)
 
 	assert.Equal(t, "chat.completion", translated["object"])
@@ -1024,7 +1024,7 @@ func TestTranslateResponse_UnknownFieldsIgnored(t *testing.T) {
 func TestTranslateResponse_EmptyBody(t *testing.T) {
 	body := map[string]any{}
 
-	translated, err := NewVertexProvider().TranslateResponse(body, "test")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "test")
 	require.NoError(t, err)
 
 	assert.Equal(t, "chat.completion", translated["object"])
@@ -1043,7 +1043,7 @@ func TestGetFloat_IntTypes(t *testing.T) {
 		"temperature": int(1),
 		"top_p":       int64(1),
 	}
-	translated, _, _, err := NewVertexProvider().TranslateRequest(body)
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	config := translated["generationConfig"].(map[string]any)
@@ -1057,7 +1057,7 @@ func TestGetFloat_UnsupportedType(t *testing.T) {
 		"messages":    []any{map[string]any{"role": "user", "content": "Hi"}},
 		"temperature": "not-a-number",
 	}
-	translated, _, _, err := NewVertexProvider().TranslateRequest(body)
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	_, hasConfig := translated["generationConfig"]
@@ -1079,7 +1079,7 @@ func TestGetInt_IntTypes(t *testing.T) {
 				"messages":   []any{map[string]any{"role": "user", "content": "Hi"}},
 				"max_tokens": tt.value,
 			}
-			translated, _, _, err := NewVertexProvider().TranslateRequest(body)
+			translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
 			require.NoError(t, err)
 			config := translated["generationConfig"].(map[string]any)
 			assert.Equal(t, 300, config["maxOutputTokens"])
@@ -1093,7 +1093,7 @@ func TestGetInt_UnsupportedType(t *testing.T) {
 		"messages":   []any{map[string]any{"role": "user", "content": "Hi"}},
 		"max_tokens": "not-a-number",
 	}
-	translated, _, _, err := NewVertexProvider().TranslateRequest(body)
+	translated, _, _, err := NewVertexTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	_, hasConfig := translated["generationConfig"]
@@ -1112,7 +1112,7 @@ func TestToInt_IntTypes(t *testing.T) {
 			"totalTokenCount":      "not-a-number",
 		},
 	}
-	translated, err := NewVertexProvider().TranslateResponse(body, "test")
+	translated, err := NewVertexTranslator().TranslateResponse(body, "test")
 	require.NoError(t, err)
 
 	usage := translated["usage"].(map[string]any)

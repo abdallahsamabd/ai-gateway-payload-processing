@@ -31,7 +31,7 @@ func TestTranslateRequest_BasicChat(t *testing.T) {
 		},
 	}
 
-	translated, headers, headersToRemove, err := NewAnthropicProvider().TranslateRequest(body)
+	translated, headers, headersToRemove, err := NewAnthropicTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	assert.Equal(t, "claude-sonnet-4-20250514", translated["model"])
@@ -60,7 +60,7 @@ func TestTranslateRequest_SystemMessage(t *testing.T) {
 		},
 	}
 
-	translated, _, _, err := NewAnthropicProvider().TranslateRequest(body)
+	translated, _, _, err := NewAnthropicTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	assert.Equal(t, "You are a helpful assistant.", translated["system"])
@@ -80,7 +80,7 @@ func TestTranslateRequest_MultipleMessages(t *testing.T) {
 		},
 	}
 
-	translated, _, _, err := NewAnthropicProvider().TranslateRequest(body)
+	translated, _, _, err := NewAnthropicTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	msgs := translated["messages"].([]map[string]any)
@@ -127,7 +127,7 @@ func TestTranslateRequest_MaxTokens(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			translated, _, _, err := NewAnthropicProvider().TranslateRequest(tt.body)
+			translated, _, _, err := NewAnthropicTranslator().TranslateRequest(tt.body)
 			require.NoError(t, err)
 			assert.Equal(t, tt.expected, translated["max_tokens"])
 		})
@@ -143,7 +143,7 @@ func TestTranslateRequest_OptionalParams(t *testing.T) {
 		"stop":        []any{"END", "STOP"},
 	}
 
-	translated, _, _, err := NewAnthropicProvider().TranslateRequest(body)
+	translated, _, _, err := NewAnthropicTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	assert.Equal(t, 0.7, translated["temperature"])
@@ -158,7 +158,7 @@ func TestTranslateRequest_StopString(t *testing.T) {
 		"stop":     "END",
 	}
 
-	translated, _, _, err := NewAnthropicProvider().TranslateRequest(body)
+	translated, _, _, err := NewAnthropicTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"END"}, translated["stop_sequences"])
@@ -169,7 +169,7 @@ func TestTranslateRequest_MissingModel(t *testing.T) {
 		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
 	}
 
-	_, _, _, err := NewAnthropicProvider().TranslateRequest(body)
+	_, _, _, err := NewAnthropicTranslator().TranslateRequest(body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "model")
 }
@@ -179,7 +179,7 @@ func TestTranslateRequest_MissingMessages(t *testing.T) {
 		"model": "claude-sonnet-4-20250514",
 	}
 
-	_, _, _, err := NewAnthropicProvider().TranslateRequest(body)
+	_, _, _, err := NewAnthropicTranslator().TranslateRequest(body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "messages")
 }
@@ -192,7 +192,7 @@ func TestTranslateRequest_OnlySystemMessage(t *testing.T) {
 		},
 	}
 
-	_, _, _, err := NewAnthropicProvider().TranslateRequest(body)
+	_, _, _, err := NewAnthropicTranslator().TranslateRequest(body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "non-system message")
 }
@@ -211,7 +211,7 @@ func TestTranslateRequest_ContentParts(t *testing.T) {
 		},
 	}
 
-	translated, _, _, err := NewAnthropicProvider().TranslateRequest(body)
+	translated, _, _, err := NewAnthropicTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	msgs := translated["messages"].([]map[string]any)
@@ -233,7 +233,7 @@ func TestTranslateResponse_BasicCompletion(t *testing.T) {
 		},
 	}
 
-	translated, err := NewAnthropicProvider().TranslateResponse(body, "claude-sonnet-4-20250514")
+	translated, err := NewAnthropicTranslator().TranslateResponse(body, "claude-sonnet-4-20250514")
 	require.NoError(t, err)
 
 	assert.Equal(t, "msg_123", translated["id"])
@@ -277,7 +277,7 @@ func TestTranslateResponse_StopReasons(t *testing.T) {
 				"usage":       map[string]any{"input_tokens": float64(1), "output_tokens": float64(1)},
 			}
 
-			translated, err := NewAnthropicProvider().TranslateResponse(body, "test")
+			translated, err := NewAnthropicTranslator().TranslateResponse(body, "test")
 			require.NoError(t, err)
 
 			choices := translated["choices"].([]any)
@@ -298,7 +298,7 @@ func TestTranslateResponse_MultipleContentBlocks(t *testing.T) {
 		"usage":       map[string]any{"input_tokens": float64(1), "output_tokens": float64(2)},
 	}
 
-	translated, err := NewAnthropicProvider().TranslateResponse(body, "test")
+	translated, err := NewAnthropicTranslator().TranslateResponse(body, "test")
 	require.NoError(t, err)
 
 	choices := translated["choices"].([]any)
@@ -315,7 +315,7 @@ func TestTranslateResponse_ModelFromBody(t *testing.T) {
 		"usage":       map[string]any{"input_tokens": float64(1), "output_tokens": float64(1)},
 	}
 
-	translated, err := NewAnthropicProvider().TranslateResponse(body, "")
+	translated, err := NewAnthropicTranslator().TranslateResponse(body, "")
 	require.NoError(t, err)
 	assert.Equal(t, "claude-sonnet-4-20250514", translated["model"])
 }
@@ -327,7 +327,7 @@ func TestTranslateResponse_MissingUsage(t *testing.T) {
 		"stop_reason": "end_turn",
 	}
 
-	translated, err := NewAnthropicProvider().TranslateResponse(body, "test")
+	translated, err := NewAnthropicTranslator().TranslateResponse(body, "test")
 	require.NoError(t, err)
 
 	usage := translated["usage"].(map[string]any)
@@ -345,7 +345,7 @@ func TestTranslateResponse_AnthropicError(t *testing.T) {
 		},
 	}
 
-	translated, err := NewAnthropicProvider().TranslateResponse(body, "claude-sonnet-4-20250514")
+	translated, err := NewAnthropicTranslator().TranslateResponse(body, "claude-sonnet-4-20250514")
 	require.NoError(t, err)
 
 	errObj := translated["error"].(map[string]any)
@@ -371,7 +371,7 @@ func TestTranslateResponse_ToolUse(t *testing.T) {
 		"usage":       map[string]any{"input_tokens": float64(20), "output_tokens": float64(15)},
 	}
 
-	translated, err := NewAnthropicProvider().TranslateResponse(body, "claude-sonnet-4-20250514")
+	translated, err := NewAnthropicTranslator().TranslateResponse(body, "claude-sonnet-4-20250514")
 	require.NoError(t, err)
 
 	choices := translated["choices"].([]any)
@@ -401,7 +401,7 @@ func TestTranslateRequest_DeveloperRole(t *testing.T) {
 		},
 	}
 
-	translated, _, _, err := NewAnthropicProvider().TranslateRequest(body)
+	translated, _, _, err := NewAnthropicTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	assert.Equal(t, "You are a coding assistant.", translated["system"])
@@ -421,7 +421,7 @@ func TestTranslateRequest_SystemAndDeveloperConcatenated(t *testing.T) {
 		},
 	}
 
-	translated, _, _, err := NewAnthropicProvider().TranslateRequest(body)
+	translated, _, _, err := NewAnthropicTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	assert.Equal(t, "Be concise.\nUse markdown.", translated["system"])
@@ -436,7 +436,7 @@ func TestTranslateRequest_ToolRoleRejected(t *testing.T) {
 		},
 	}
 
-	_, _, _, err := NewAnthropicProvider().TranslateRequest(body)
+	_, _, _, err := NewAnthropicTranslator().TranslateRequest(body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "tool")
 	assert.Contains(t, err.Error(), "not supported")
@@ -450,7 +450,7 @@ func TestTranslateRequest_UnknownRoleRejected(t *testing.T) {
 		},
 	}
 
-	_, _, _, err := NewAnthropicProvider().TranslateRequest(body)
+	_, _, _, err := NewAnthropicTranslator().TranslateRequest(body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown role")
 }
@@ -469,7 +469,7 @@ func TestTranslateRequest_NonTextContentSkipped(t *testing.T) {
 		},
 	}
 
-	translated, _, _, err := NewAnthropicProvider().TranslateRequest(body)
+	translated, _, _, err := NewAnthropicTranslator().TranslateRequest(body)
 	require.NoError(t, err)
 
 	msgs := translated["messages"].([]map[string]any)

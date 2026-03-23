@@ -30,7 +30,7 @@ import (
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/bbr/framework"
 
 	api_translation "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation"
-	apikey_injection "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/apikey_injection"
+	apikey_injection "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/apikey-injection"
 	provider_resolver "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/model-provider-resolver"
 )
 

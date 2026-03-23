@@ -25,8 +25,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/bbr/framework"
 
-	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/external-model/provider"
-	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/external-model/state"
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/common/provider"
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/common/state"
 )
 
 func TestProcessRequest_ModelResolved(t *testing.T) {

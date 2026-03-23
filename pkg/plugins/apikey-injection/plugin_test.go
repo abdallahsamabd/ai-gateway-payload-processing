@@ -26,17 +26,17 @@ import (
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/bbr/framework"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/framework/interface/plugin"
 
-	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/external-model/provider"
-	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/external-model/state"
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/common/provider"
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/common/state"
 )
 
 // newTestPlugin creates an apiKeyInjectionPlugin for unit tests, bypassing the
 // Handle-based Factory (which requires a real manager).
-func newTestPlugin(store *secretStore) *apiKeyInjectionPlugin {
-	return &apiKeyInjectionPlugin{
-		typedName: plugin.TypedName{Type: APIKeyInjectionPluginType, Name: APIKeyInjectionPluginType},
-		injectors: defaultInjectors(),
-		store:     store,
+func newTestPlugin(store *secretStore) *ApiKeyInjectionPlugin {
+	return &ApiKeyInjectionPlugin{
+		typedName:        plugin.TypedName{Type: APIKeyInjectionPluginType, Name: APIKeyInjectionPluginType},
+		apikeyGenerators: defaultApiKeyGenerators(),
+		store:            store,
 	}
 }
 
@@ -179,7 +179,7 @@ func TestTypedName(t *testing.T) {
 }
 
 func TestDefaultInjectors(t *testing.T) {
-	injectors := defaultInjectors()
+	injectors := defaultApiKeyGenerators()
 
 	require.Contains(t, injectors, provider.OpenAI)
 	assert.Equal(t, "Authorization", injectors[provider.OpenAI].headerName)
@@ -235,12 +235,12 @@ func TestAPIKeyInjector(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			injector := &apiKeyInjector{
+			injector := &apiKeyGenerator{
 				headerName:        tt.headerName,
 				headerValuePrefix: tt.headerPrefix,
 			}
 
-			gotName, gotValue := injector.inject(tt.apiKey)
+			gotName, gotValue := injector.generateHeader(tt.apiKey)
 
 			assert.Equal(t, tt.wantHeaderName, gotName)
 			assert.Equal(t, tt.wantHeaderValue, gotValue)

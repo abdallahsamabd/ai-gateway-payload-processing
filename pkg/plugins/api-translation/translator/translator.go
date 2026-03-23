@@ -14,12 +14,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package providers
+package translator
 
-// Provider translates between OpenAI Chat Completions format and a specific
+// Translator translates between OpenAI Chat Completions format and a specific
 // provider's native API format. Implementations handle both request and response
 // translation using generic map[string]any bodies (pre-parsed JSON from the BBR framework).
-type Provider interface {
+type Translator interface {
 	// TranslateRequest translates an OpenAI-format request body to the provider's native format.
 	// Returns the translated body, headers to set, headers to remove, and any error.
 	// A nil translatedBody means no body mutation is needed.

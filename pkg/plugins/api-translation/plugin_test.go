@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/bbr/framework"
 
-	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/external-model/state"
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/common/state"
 )
 
 func newCycleStateWithProvider(providerName string) *framework.CycleState {

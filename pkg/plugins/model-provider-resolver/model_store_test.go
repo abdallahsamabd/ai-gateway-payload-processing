@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/types"
 
-	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/external-model/provider"
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/common/provider"
 )
 
 func TestModelStore_SetAndGet(t *testing.T) {

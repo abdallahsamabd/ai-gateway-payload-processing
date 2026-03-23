@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator"
 )
 
 const (
@@ -29,16 +31,19 @@ const (
 	defaultMaxTokens    = 4096
 )
 
-// AnthropicProvider translates between OpenAI Chat Completions format and
-// Anthropic Messages API format. Works with generic map[string]any bodies.
-type AnthropicProvider struct{}
+// compile-time interface check
+var _ translator.Translator = &AnthropicTranslator{}
 
-func NewAnthropicProvider() *AnthropicProvider {
-	return &AnthropicProvider{}
+func NewAnthropicTranslator() *AnthropicTranslator {
+	return &AnthropicTranslator{}
 }
 
+// AnthropicTranslator translates between OpenAI Chat Completions format and
+// Anthropic Messages API format. Works with generic map[string]any bodies.
+type AnthropicTranslator struct{}
+
 // TranslateRequest translates an OpenAI Chat Completions request body to Anthropic Messages API format.
-func (p *AnthropicProvider) TranslateRequest(body map[string]any) (map[string]any, map[string]string, []string, error) {
+func (t *AnthropicTranslator) TranslateRequest(body map[string]any) (map[string]any, map[string]string, []string, error) {
 	model, _ := body["model"].(string)
 	if model == "" {
 		return nil, nil, nil, fmt.Errorf("model field is required")
@@ -91,7 +96,7 @@ func (p *AnthropicProvider) TranslateRequest(body map[string]any) (map[string]an
 
 // TranslateResponse translates an Anthropic Messages API response to OpenAI Chat Completions format.
 // Handles both success responses (type: "message") and error responses (type: "error").
-func (p *AnthropicProvider) TranslateResponse(body map[string]any, model string) (map[string]any, error) {
+func (t *AnthropicTranslator) TranslateResponse(body map[string]any, model string) (map[string]any, error) {
 	bodyType, _ := body["type"].(string)
 
 	// Handle Anthropic error responses
@@ -184,9 +189,9 @@ func separateSystemMessages(messages []map[string]any) (string, []map[string]any
 				"content": content,
 			})
 		case "tool", "function":
-			return "", nil, fmt.Errorf("message at index %d has role %q which is not supported for Anthropic translation", i, role)
+			return "", nil, fmt.Errorf("message at index %d has role '%s' which is not supported for Anthropic translation", i, role)
 		default:
-			return "", nil, fmt.Errorf("message at index %d has unknown role %q", i, role)
+			return "", nil, fmt.Errorf("message at index %d has unknown role '%s'", i, role)
 		}
 	}
 
@@ -328,7 +333,7 @@ func extractAnthropicToolCalls(body map[string]any) ([]any, error) {
 
 			args, err := toJSONString(input)
 			if err != nil {
-				return nil, fmt.Errorf("failed to marshal tool call arguments for %q: %w", name, err)
+				return nil, fmt.Errorf("failed to marshal tool call arguments for '%s' - %w", name, err)
 			}
 
 			toolCall := map[string]any{

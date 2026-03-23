@@ -22,32 +22,38 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator"
 )
 
 const (
 	vertexV1BetaPathTemplate = "/v1beta/models/%s:generateContent"
 )
 
-// modelNamePattern validates Gemini model names to prevent path injection.
-var modelNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+// compile-time interface check
+var _ translator.Translator = &VertexTranslator{}
 
-// VertexProvider translates between OpenAI Chat Completions format and
+func NewVertexTranslator() *VertexTranslator {
+	return &VertexTranslator{
+		modelNamePattern: regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`), // modelNamePattern validates Gemini model names to prevent path injection.
+	}
+}
+
+// VertexTranslator translates between OpenAI Chat Completions format and
 // Google Vertex AI (Gemini) GenerateContent API format.
-type VertexProvider struct{}
-
-func NewVertexProvider() *VertexProvider {
-	return &VertexProvider{}
+type VertexTranslator struct {
+	modelNamePattern *regexp.Regexp
 }
 
 // TranslateRequest translates an OpenAI Chat Completions request body to
 // Vertex AI GenerateContent API format.
-func (p *VertexProvider) TranslateRequest(body map[string]any) (map[string]any, map[string]string, []string, error) {
+func (t *VertexTranslator) TranslateRequest(body map[string]any) (map[string]any, map[string]string, []string, error) {
 	model, _ := body["model"].(string)
 	if model == "" {
 		return nil, nil, nil, fmt.Errorf("model field is required")
 	}
 
-	if !modelNamePattern.MatchString(model) {
+	if !t.modelNamePattern.MatchString(model) {
 		return nil, nil, nil, fmt.Errorf("model '%s' contains invalid characters for Vertex AI model name", model)
 	}
 
@@ -96,7 +102,7 @@ func (p *VertexProvider) TranslateRequest(body map[string]any) (map[string]any, 
 
 // TranslateResponse translates a Vertex AI GenerateContent response to
 // OpenAI Chat Completions format. Handles both success and error responses.
-func (p *VertexProvider) TranslateResponse(body map[string]any, model string) (map[string]any, error) {
+func (t *VertexTranslator) TranslateResponse(body map[string]any, model string) (map[string]any, error) {
 	if errObj, ok := body["error"].(map[string]any); ok {
 		return translateVertexError(errObj), nil
 	}
@@ -149,9 +155,9 @@ func separateSystemMessages(messages []map[string]any) ([]map[string]any, []map[
 				"parts": []map[string]any{{"text": content}},
 			})
 		case "tool", "function":
-			return nil, nil, fmt.Errorf("message at index %d has role %q which is not supported for Vertex translation", i, role)
+			return nil, nil, fmt.Errorf("message at index %d has role '%s' which is not supported for Vertex translation", i, role)
 		default:
-			return nil, nil, fmt.Errorf("message at index %d has unknown role %q", i, role)
+			return nil, nil, fmt.Errorf("message at index %d has unknown role '%s'", i, role)
 		}
 	}
 

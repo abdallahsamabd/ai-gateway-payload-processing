@@ -19,6 +19,8 @@ package azureopenai
 import (
 	"fmt"
 	"regexp"
+
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator"
 )
 
 const (
@@ -32,34 +34,38 @@ const (
 	azurePathTemplate = "/openai/deployments/%s/chat/completions?api-version=%s"
 )
 
-// deploymentIDPattern validates Azure deployment IDs to prevent path/query injection.
-var deploymentIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+// compile-time interface check
+var _ translator.Translator = &AzureOpenAITranslator{}
 
-// AzureOpenAIProvider translates between OpenAI Chat Completions format and
-// Azure OpenAI Service format. Azure OpenAI uses the same request/response schema
-// as OpenAI, so translation is limited to path rewriting and header adjustments.
-type AzureOpenAIProvider struct {
-	apiVersion string
+func NewAzureOpenAITranslator() *AzureOpenAITranslator {
+	return &AzureOpenAITranslator{
+		apiVersion:          defaultAPIVersion,
+		deploymentIDPattern: regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`), // deploymentIDPattern validates Azure deployment IDs to prevent path/query injection.
+	}
 }
 
-func NewAzureOpenAIProvider() *AzureOpenAIProvider {
-	return &AzureOpenAIProvider{apiVersion: defaultAPIVersion}
+// AzureOpenAITranslator translates between OpenAI Chat Completions format and
+// Azure OpenAI Service format. Azure OpenAI uses the same request/response schema
+// as OpenAI, so translation is limited to path rewriting and header adjustments.
+type AzureOpenAITranslator struct {
+	apiVersion          string
+	deploymentIDPattern *regexp.Regexp
 }
 
 // TranslateRequest rewrites the path and headers for Azure OpenAI.
 // The request body is not mutated since Azure OpenAI accepts the same schema as OpenAI.
 // Azure ignores the model field in the body and uses the deployment ID from the URI path.
-func (p *AzureOpenAIProvider) TranslateRequest(body map[string]any) (map[string]any, map[string]string, []string, error) {
+func (t *AzureOpenAITranslator) TranslateRequest(body map[string]any) (map[string]any, map[string]string, []string, error) {
 	model, _ := body["model"].(string)
 	if model == "" {
 		return nil, nil, nil, fmt.Errorf("model field is required")
 	}
-	if !deploymentIDPattern.MatchString(model) {
+	if !t.deploymentIDPattern.MatchString(model) {
 		return nil, nil, nil, fmt.Errorf("model '%s' contains invalid characters for Azure deployment ID", model)
 	}
 
 	headers := map[string]string{
-		":path":        fmt.Sprintf(azurePathTemplate, model, p.apiVersion),
+		":path":        fmt.Sprintf(azurePathTemplate, model, t.apiVersion),
 		"content-type": "application/json",
 	}
 
@@ -68,6 +74,6 @@ func (p *AzureOpenAIProvider) TranslateRequest(body map[string]any) (map[string]
 }
 
 // TranslateResponse is a no-op since Azure OpenAI returns responses in OpenAI format.
-func (p *AzureOpenAIProvider) TranslateResponse(body map[string]any, model string) (map[string]any, error) {
+func (t *AzureOpenAITranslator) TranslateResponse(body map[string]any, model string) (map[string]any, error) {
 	return nil, nil
 }
