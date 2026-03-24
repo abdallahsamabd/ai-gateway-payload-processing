@@ -18,6 +18,7 @@ package api_translation
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,13 +26,61 @@ import (
 	ctrlbuilder "sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/bbr/framework"
+	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/framework/interface/plugin"
 
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator"
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/common/state"
 )
+
+// ---------------------------------------------------------------------------
+// Test helpers
+// ---------------------------------------------------------------------------
+
+type testHandle struct{}
+
+func (h *testHandle) Context() context.Context                { return context.Background() }
+func (h *testHandle) ClientReader() client.Reader             { return nil }
+func (h *testHandle) ReconcilerBuilder() *ctrlbuilder.Builder { return nil }
 
 func newTestPlugin() *APITranslationPlugin {
 	p, _ := NewAPITranslationPlugin(context.Background(), apiTranslationConfig{})
 	return p
+}
+
+// ---------------------------------------------------------------------------
+// Mock translator
+// ---------------------------------------------------------------------------
+
+type mockTranslator struct {
+	reqBody     map[string]any
+	reqHeaders  map[string]string
+	reqRemove   []string
+	reqErr      error
+	respBody    map[string]any
+	respErr     error
+	lastReqBody map[string]any
+	lastModel   string
+}
+
+func (m *mockTranslator) TranslateRequest(body map[string]any) (map[string]any, map[string]string, []string, error) {
+	m.lastReqBody = body
+	return m.reqBody, m.reqHeaders, m.reqRemove, m.reqErr
+}
+
+func (m *mockTranslator) TranslateResponse(body map[string]any, model string) (map[string]any, error) {
+	m.lastModel = model
+	return m.respBody, m.respErr
+}
+
+var _ translator.Translator = (*mockTranslator)(nil)
+
+func newPluginWithMock(providerName string, mock *mockTranslator) *APITranslationPlugin {
+	return &APITranslationPlugin{
+		typedName: plugin.TypedName{Type: APITranslationPluginType, Name: APITranslationPluginType},
+		providers: map[string]translator.Translator{
+			providerName: mock,
+		},
+	}
 }
 
 func newCycleStateWithProvider(providerName string) *framework.CycleState {
@@ -39,6 +88,10 @@ func newCycleStateWithProvider(providerName string) *framework.CycleState {
 	cs.Write(state.ProviderKey, providerName)
 	return cs
 }
+
+// ---------------------------------------------------------------------------
+// Request: routing & passthrough
+// ---------------------------------------------------------------------------
 
 func TestProcessRequest_NoProvider(t *testing.T) {
 	p := newTestPlugin()
@@ -65,170 +118,6 @@ func TestProcessRequest_OpenAIProvider(t *testing.T) {
 	assert.False(t, req.BodyMutated())
 }
 
-func TestProcessRequest_AnthropicProvider(t *testing.T) {
-	p := newTestPlugin()
-
-	cs := newCycleStateWithProvider("anthropic")
-	req := framework.NewInferenceRequest()
-	req.Headers["authorization"] = "Bearer sk-test"
-	req.Headers["content-length"] = "123"
-	req.Body["model"] = "claude-sonnet-4-20250514"
-	req.Body["messages"] = []any{
-		map[string]any{"role": "system", "content": "Be concise"},
-		map[string]any{"role": "user", "content": "What is 2+2?"},
-	}
-	req.Body["max_tokens"] = float64(100)
-
-	err := p.ProcessRequest(context.Background(), cs, req)
-	require.NoError(t, err)
-
-	assert.True(t, req.BodyMutated())
-
-	assert.Equal(t, "Be concise", req.Body["system"])
-	assert.Equal(t, 100, req.Body["max_tokens"])
-
-	msgs, ok := req.Body["messages"].([]map[string]any)
-	require.True(t, ok)
-	require.Len(t, msgs, 1)
-	assert.Equal(t, "user", msgs[0]["role"])
-
-	mutated := req.MutatedHeaders()
-	assert.Equal(t, "2023-06-01", mutated["anthropic-version"])
-	assert.Equal(t, "/v1/messages", mutated[":path"])
-	assert.Equal(t, "application/json", mutated["content-type"])
-
-	removed := req.RemovedHeaders()
-	assert.Contains(t, removed, "authorization")
-	assert.NotContains(t, removed, "content-length")
-}
-
-func TestProcessRequest_AzureOpenAIProvider(t *testing.T) {
-	p := newTestPlugin()
-
-	cs := newCycleStateWithProvider("azure-openai")
-	req := framework.NewInferenceRequest()
-	req.Headers["authorization"] = "Bearer sk-test"
-	req.Headers["content-length"] = "200"
-	req.Body["model"] = "gpt-4o"
-	req.Body["messages"] = []any{
-		map[string]any{"role": "system", "content": "Be concise"},
-		map[string]any{"role": "user", "content": "What is 2+2?"},
-	}
-	req.Body["max_tokens"] = float64(100)
-	req.Body["temperature"] = 0.7
-
-	err := p.ProcessRequest(context.Background(), cs, req)
-	require.NoError(t, err)
-
-	// Azure OpenAI does not mutate the body — same schema as OpenAI
-	assert.False(t, req.BodyMutated())
-
-	// Original body fields are preserved
-	assert.Equal(t, "gpt-4o", req.Body["model"])
-	assert.Equal(t, float64(100), req.Body["max_tokens"])
-	assert.Equal(t, 0.7, req.Body["temperature"])
-
-	mutated := req.MutatedHeaders()
-	assert.Equal(t, "/openai/v1/chat/completions", mutated[":path"])
-	assert.Equal(t, "application/json", mutated["content-type"])
-
-	removed := req.RemovedHeaders()
-	assert.Contains(t, removed, "authorization")
-	assert.NotContains(t, removed, "content-length")
-}
-
-func TestProcessResponse_AzureOpenAI_CleanResponse(t *testing.T) {
-	p := newTestPlugin()
-
-	cs := newCycleStateWithProvider("azure-openai")
-	cs.Write(state.ModelKey, "gpt-4o")
-
-	resp := framework.NewInferenceResponse()
-	resp.Body["id"] = "chatcmpl-abc123"
-	resp.Body["object"] = "chat.completion"
-	resp.Body["model"] = "gpt-4o"
-	resp.Body["choices"] = []any{
-		map[string]any{
-			"index": float64(0),
-			"message": map[string]any{
-				"role":    "assistant",
-				"content": "The answer is 4.",
-			},
-			"finish_reason": "stop",
-		},
-	}
-	resp.Body["usage"] = map[string]any{
-		"prompt_tokens":     float64(10),
-		"completion_tokens": float64(5),
-		"total_tokens":      float64(15),
-	}
-
-	err := p.ProcessResponse(context.Background(), cs, resp)
-	require.NoError(t, err)
-
-	assert.False(t, resp.BodyMutated(), "clean response without Azure-specific fields should not be mutated")
-}
-
-func TestProcessResponse_AzureOpenAI_StripsProviderFields(t *testing.T) {
-	p := newTestPlugin()
-
-	cs := newCycleStateWithProvider("azure-openai")
-	cs.Write(state.ModelKey, "gpt-4o")
-
-	resp := framework.NewInferenceResponse()
-	resp.Body["id"] = "chatcmpl-abc123"
-	resp.Body["object"] = "chat.completion"
-	resp.Body["model"] = "gpt-4o"
-	resp.Body["choices"] = []any{
-		map[string]any{
-			"index": float64(0),
-			"message": map[string]any{
-				"role":    "assistant",
-				"content": "The answer is 4.",
-			},
-			"finish_reason": "stop",
-			"content_filter_results": map[string]any{
-				"hate":      map[string]any{"filtered": false, "severity": "safe"},
-				"self_harm": map[string]any{"filtered": false, "severity": "safe"},
-				"sexual":    map[string]any{"filtered": false, "severity": "safe"},
-				"violence":  map[string]any{"filtered": false, "severity": "safe"},
-			},
-		},
-	}
-	resp.Body["prompt_filter_results"] = []any{
-		map[string]any{
-			"prompt_index": float64(0),
-			"content_filter_results": map[string]any{
-				"hate":      map[string]any{"filtered": false, "severity": "safe"},
-				"self_harm": map[string]any{"filtered": false, "severity": "safe"},
-			},
-		},
-	}
-	resp.Body["usage"] = map[string]any{
-		"prompt_tokens":     float64(10),
-		"completion_tokens": float64(5),
-		"total_tokens":      float64(15),
-	}
-
-	err := p.ProcessResponse(context.Background(), cs, resp)
-	require.NoError(t, err)
-
-	assert.True(t, resp.BodyMutated())
-	assert.NotContains(t, resp.Body, "prompt_filter_results")
-
-	choices := resp.Body["choices"].([]any)
-	choice := choices[0].(map[string]any)
-	assert.NotContains(t, choice, "content_filter_results")
-
-	assert.Equal(t, "chatcmpl-abc123", resp.Body["id"])
-	assert.Equal(t, "chat.completion", resp.Body["object"])
-	assert.Equal(t, "gpt-4o", resp.Body["model"])
-	msg := choice["message"].(map[string]any)
-	assert.Equal(t, "assistant", msg["role"])
-	assert.Equal(t, "The answer is 4.", msg["content"])
-	assert.Equal(t, "stop", choice["finish_reason"])
-}
-
 func TestProcessRequest_UnknownProvider(t *testing.T) {
 	p := newTestPlugin()
 
@@ -243,265 +132,119 @@ func TestProcessRequest_UnknownProvider(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown")
 }
 
-func TestProcessResponse_Anthropic(t *testing.T) {
-	p := newTestPlugin()
+// ---------------------------------------------------------------------------
+// Request: mock translator — body, headers, authorization removal
+// ---------------------------------------------------------------------------
 
-	cs := newCycleStateWithProvider("anthropic")
-	cs.Write(state.ModelKey, "claude-sonnet-4-20250514")
-
-	resp := framework.NewInferenceResponse()
-	resp.Body["id"] = "msg_123"
-	resp.Body["type"] = "message"
-	resp.Body["content"] = []any{
-		map[string]any{"type": "text", "text": "The answer is 4."},
+func TestProcessRequest_BodyMutated(t *testing.T) {
+	mock := &mockTranslator{
+		reqBody:    map[string]any{"translated": true},
+		reqHeaders: map[string]string{":path": "/v1/translated", "content-type": "application/json"},
+		reqRemove:  []string{"x-custom"},
 	}
-	resp.Body["stop_reason"] = "end_turn"
-	resp.Body["usage"] = map[string]any{
-		"input_tokens":  float64(10),
-		"output_tokens": float64(5),
-	}
+	p := newPluginWithMock("test-provider", mock)
 
-	err := p.ProcessResponse(context.Background(), cs, resp)
-	require.NoError(t, err)
-
-	assert.True(t, resp.BodyMutated())
-	assert.Equal(t, "chat.completion", resp.Body["object"])
-	assert.Equal(t, "claude-sonnet-4-20250514", resp.Body["model"])
-
-	choices := resp.Body["choices"].([]any)
-	choice := choices[0].(map[string]any)
-	msg := choice["message"].(map[string]any)
-	assert.Equal(t, "assistant", msg["role"])
-	assert.Equal(t, "The answer is 4.", msg["content"])
-	assert.Equal(t, "stop", choice["finish_reason"])
-
-	usage := resp.Body["usage"].(map[string]any)
-	assert.Equal(t, 10, usage["prompt_tokens"])
-	assert.Equal(t, 5, usage["completion_tokens"])
-	assert.Equal(t, 15, usage["total_tokens"])
-}
-
-func TestProcessResponse_AnthropicError(t *testing.T) {
-	p := newTestPlugin()
-
-	cs := newCycleStateWithProvider("anthropic")
-
-	resp := framework.NewInferenceResponse()
-	resp.Body["type"] = "error"
-	resp.Body["error"] = map[string]any{
-		"type":    "invalid_request_error",
-		"message": "max_tokens must be positive",
-	}
-
-	err := p.ProcessResponse(context.Background(), cs, resp)
-	require.NoError(t, err)
-
-	assert.True(t, resp.BodyMutated())
-	errObj := resp.Body["error"].(map[string]any)
-	assert.Equal(t, "invalid_request_error", errObj["type"])
-}
-
-func TestProcessResponse_AnthropicToolUse(t *testing.T) {
-	p := newTestPlugin()
-
-	cs := newCycleStateWithProvider("anthropic")
-	cs.Write(state.ModelKey, "claude-sonnet-4-20250514")
-
-	resp := framework.NewInferenceResponse()
-	resp.Body["id"] = "msg_456"
-	resp.Body["type"] = "message"
-	resp.Body["content"] = []any{
-		map[string]any{"type": "text", "text": "Let me check."},
-		map[string]any{
-			"type":  "tool_use",
-			"id":    "toolu_abc",
-			"name":  "get_weather",
-			"input": map[string]any{"location": "Paris"},
-		},
-	}
-	resp.Body["stop_reason"] = "tool_use"
-	resp.Body["usage"] = map[string]any{
-		"input_tokens":  float64(20),
-		"output_tokens": float64(10),
-	}
-
-	err := p.ProcessResponse(context.Background(), cs, resp)
-	require.NoError(t, err)
-
-	assert.True(t, resp.BodyMutated())
-
-	choices := resp.Body["choices"].([]any)
-	choice := choices[0].(map[string]any)
-	assert.Equal(t, "tool_calls", choice["finish_reason"])
-
-	msg := choice["message"].(map[string]any)
-	toolCalls := msg["tool_calls"].([]any)
-	require.Len(t, toolCalls, 1)
-
-	tc := toolCalls[0].(map[string]any)
-	assert.Equal(t, "toolu_abc", tc["id"])
-	assert.Equal(t, 0, tc["index"])
-}
-
-func TestProcessRequest_VertexProvider(t *testing.T) {
-	t.Skip("vertex (native GenerateContent) provider commented out — not used in 3.4 ExternalModel flow")
-	p := newTestPlugin()
-
-	cs := newCycleStateWithProvider("vertex")
+	cs := newCycleStateWithProvider("test-provider")
 	req := framework.NewInferenceRequest()
 	req.Headers["authorization"] = "Bearer sk-test"
-	req.Headers["content-length"] = "200"
-	req.Body["model"] = "gemini-2.5-flash"
-	req.Body["messages"] = []any{
-		map[string]any{"role": "system", "content": "Be concise"},
-		map[string]any{"role": "user", "content": "What is Kubernetes?"},
-	}
-	req.Body["max_tokens"] = float64(100)
-	req.Body["temperature"] = 0.7
+	req.Headers["x-custom"] = "val"
+	req.Body["model"] = "m"
+	req.Body["messages"] = []any{map[string]any{"role": "user", "content": "Hi"}}
 
 	err := p.ProcessRequest(context.Background(), cs, req)
 	require.NoError(t, err)
 
 	assert.True(t, req.BodyMutated())
-
-	contents, ok := req.Body["contents"].([]map[string]any)
-	require.True(t, ok)
-	require.Len(t, contents, 1)
-	assert.Equal(t, "user", contents[0]["role"])
-
-	sysInstruction, ok := req.Body["systemInstruction"].(map[string]any)
-	require.True(t, ok)
-	sysParts := sysInstruction["parts"].([]map[string]any)
-	assert.Equal(t, "Be concise", sysParts[0]["text"])
-
-	genConfig, ok := req.Body["generationConfig"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, 100, genConfig["maxOutputTokens"])
-	assert.Equal(t, 0.7, genConfig["temperature"])
+	assert.Equal(t, true, req.Body["translated"])
 
 	mutated := req.MutatedHeaders()
-	assert.Equal(t, "/v1beta/models/gemini-2.5-flash:generateContent", mutated[":path"])
+	assert.Equal(t, "/v1/translated", mutated[":path"])
 	assert.Equal(t, "application/json", mutated["content-type"])
 
 	removed := req.RemovedHeaders()
+	assert.Contains(t, removed, "x-custom")
+	assert.Contains(t, removed, "authorization", "authorization must always be removed")
+}
+
+func TestProcessRequest_NilBody_NoMutation(t *testing.T) {
+	mock := &mockTranslator{
+		reqBody:    nil,
+		reqHeaders: map[string]string{":path": "/openai/v1/chat/completions"},
+	}
+	p := newPluginWithMock("test-provider", mock)
+
+	cs := newCycleStateWithProvider("test-provider")
+	req := framework.NewInferenceRequest()
+	req.Headers["authorization"] = "Bearer sk-test"
+	req.Body["model"] = "gpt-4o"
+	req.Body["messages"] = []any{map[string]any{"role": "user", "content": "Hi"}}
+
+	err := p.ProcessRequest(context.Background(), cs, req)
+	require.NoError(t, err)
+
+	assert.False(t, req.BodyMutated(), "nil translated body means no body mutation")
+
+	mutated := req.MutatedHeaders()
+	assert.Contains(t, mutated, ":path", "headers should still be applied even without body mutation")
+
+	removed := req.RemovedHeaders()
 	assert.Contains(t, removed, "authorization")
-	assert.NotContains(t, removed, "content-length")
 }
 
-func TestProcessResponse_Vertex(t *testing.T) {
-	t.Skip("vertex (native GenerateContent) provider commented out — not used in 3.4 ExternalModel flow")
-	p := newTestPlugin()
-
-	cs := newCycleStateWithProvider("vertex")
-	cs.Write(state.ModelKey, "gemini-2.5-flash")
-
-	resp := framework.NewInferenceResponse()
-	resp.Body["candidates"] = []any{
-		map[string]any{
-			"content": map[string]any{
-				"parts": []any{map[string]any{"text": "Kubernetes is a container orchestration platform."}},
-				"role":  "model",
-			},
-			"finishReason": "STOP",
-		},
+func TestProcessRequest_AuthorizationAlwaysRemoved(t *testing.T) {
+	mock := &mockTranslator{
+		reqRemove: nil,
 	}
-	resp.Body["usageMetadata"] = map[string]any{
-		"promptTokenCount":     float64(12),
-		"candidatesTokenCount": float64(8),
-		"totalTokenCount":      float64(20),
-	}
-	resp.Body["responseId"] = "resp-abc123"
+	p := newPluginWithMock("test-provider", mock)
 
-	err := p.ProcessResponse(context.Background(), cs, resp)
+	cs := newCycleStateWithProvider("test-provider")
+	req := framework.NewInferenceRequest()
+	req.Headers["authorization"] = "Bearer sk-test"
+	req.Body["model"] = "m"
+	req.Body["messages"] = []any{map[string]any{"role": "user", "content": "Hi"}}
+
+	err := p.ProcessRequest(context.Background(), cs, req)
 	require.NoError(t, err)
 
-	assert.True(t, resp.BodyMutated())
-	assert.Equal(t, "chat.completion", resp.Body["object"])
-	assert.Equal(t, "gemini-2.5-flash", resp.Body["model"])
-	assert.Equal(t, "resp-abc123", resp.Body["id"])
-
-	choices := resp.Body["choices"].([]any)
-	choice := choices[0].(map[string]any)
-	msg := choice["message"].(map[string]any)
-	assert.Equal(t, "assistant", msg["role"])
-	assert.Equal(t, "Kubernetes is a container orchestration platform.", msg["content"])
-	assert.Equal(t, "stop", choice["finish_reason"])
-
-	usage := resp.Body["usage"].(map[string]any)
-	assert.Equal(t, 12, usage["prompt_tokens"])
-	assert.Equal(t, 8, usage["completion_tokens"])
-	assert.Equal(t, 20, usage["total_tokens"])
+	removed := req.RemovedHeaders()
+	assert.Contains(t, removed, "authorization",
+		"authorization header must be removed even when translator doesn't request it")
 }
 
-func TestProcessResponse_VertexError(t *testing.T) {
-	t.Skip("vertex (native GenerateContent) provider commented out — not used in 3.4 ExternalModel flow")
-	p := newTestPlugin()
-
-	cs := newCycleStateWithProvider("vertex")
-
-	resp := framework.NewInferenceResponse()
-	resp.Body["error"] = map[string]any{
-		"code":    float64(400),
-		"message": "Invalid value at 'contents'",
-		"status":  "INVALID_ARGUMENT",
+func TestProcessRequest_TranslatorError(t *testing.T) {
+	mock := &mockTranslator{
+		reqErr: fmt.Errorf("model field is required"),
 	}
+	p := newPluginWithMock("test-provider", mock)
 
-	err := p.ProcessResponse(context.Background(), cs, resp)
+	cs := newCycleStateWithProvider("test-provider")
+	req := framework.NewInferenceRequest()
+	req.Body["messages"] = []any{map[string]any{"role": "user", "content": "Hi"}}
+
+	err := p.ProcessRequest(context.Background(), cs, req)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "model field is required")
+	assert.Contains(t, err.Error(), "test-provider")
+}
+
+func TestProcessRequest_ReceivesOriginalBody(t *testing.T) {
+	mock := &mockTranslator{}
+	p := newPluginWithMock("test-provider", mock)
+
+	cs := newCycleStateWithProvider("test-provider")
+	req := framework.NewInferenceRequest()
+	req.Body["model"] = "my-model"
+	req.Body["messages"] = []any{map[string]any{"role": "user", "content": "test"}}
+
+	err := p.ProcessRequest(context.Background(), cs, req)
 	require.NoError(t, err)
 
-	assert.True(t, resp.BodyMutated())
-	errObj := resp.Body["error"].(map[string]any)
-	assert.Equal(t, "INVALID_ARGUMENT", errObj["type"])
-	assert.Equal(t, "Invalid value at 'contents'", errObj["message"])
+	assert.Equal(t, "my-model", mock.lastReqBody["model"])
 }
 
-func TestProcessResponse_VertexToolCall(t *testing.T) {
-	t.Skip("vertex (native GenerateContent) provider commented out — not used in 3.4 ExternalModel flow")
-	p := newTestPlugin()
-
-	cs := newCycleStateWithProvider("vertex")
-	cs.Write(state.ModelKey, "gemini-2.5-flash")
-
-	resp := framework.NewInferenceResponse()
-	resp.Body["candidates"] = []any{
-		map[string]any{
-			"content": map[string]any{
-				"parts": []any{
-					map[string]any{
-						"functionCall": map[string]any{
-							"name": "get_weather",
-							"args": map[string]any{"location": "Paris"},
-						},
-					},
-				},
-				"role": "model",
-			},
-			"finishReason": "STOP",
-		},
-	}
-	resp.Body["usageMetadata"] = map[string]any{
-		"promptTokenCount":     float64(20),
-		"candidatesTokenCount": float64(10),
-		"totalTokenCount":      float64(30),
-	}
-
-	err := p.ProcessResponse(context.Background(), cs, resp)
-	require.NoError(t, err)
-
-	assert.True(t, resp.BodyMutated())
-
-	choices := resp.Body["choices"].([]any)
-	choice := choices[0].(map[string]any)
-	msg := choice["message"].(map[string]any)
-	toolCalls := msg["tool_calls"].([]any)
-	require.Len(t, toolCalls, 1)
-
-	tc := toolCalls[0].(map[string]any)
-	assert.Equal(t, "call_0", tc["id"])
-	assert.Equal(t, 0, tc["index"])
-	fn := tc["function"].(map[string]any)
-	assert.Equal(t, "get_weather", fn["name"])
-}
+// ---------------------------------------------------------------------------
+// Response: routing & passthrough
+// ---------------------------------------------------------------------------
 
 func TestProcessResponse_NoProviderPassthrough(t *testing.T) {
 	p := newTestPlugin()
@@ -530,15 +273,104 @@ func TestProcessResponse_OpenAIPassthrough(t *testing.T) {
 	assert.False(t, resp.BodyMutated())
 }
 
+// ---------------------------------------------------------------------------
+// Response: mock translator — body mutation, nil body, model, errors
+// ---------------------------------------------------------------------------
+
+func TestProcessResponse_BodyMutated(t *testing.T) {
+	mock := &mockTranslator{
+		respBody: map[string]any{
+			"object":  "chat.completion",
+			"model":   "test-model",
+			"choices": []any{map[string]any{"message": map[string]any{"content": "translated"}}},
+		},
+	}
+	p := newPluginWithMock("test-provider", mock)
+
+	cs := newCycleStateWithProvider("test-provider")
+	cs.Write(state.ModelKey, "test-model")
+
+	resp := framework.NewInferenceResponse()
+	resp.Body["original"] = "data"
+
+	err := p.ProcessResponse(context.Background(), cs, resp)
+	require.NoError(t, err)
+
+	assert.True(t, resp.BodyMutated())
+	assert.Equal(t, "chat.completion", resp.Body["object"])
+}
+
+func TestProcessResponse_NilBody_NoMutation(t *testing.T) {
+	mock := &mockTranslator{
+		respBody: nil,
+	}
+	p := newPluginWithMock("test-provider", mock)
+
+	cs := newCycleStateWithProvider("test-provider")
+
+	resp := framework.NewInferenceResponse()
+	resp.Body["object"] = "chat.completion"
+
+	err := p.ProcessResponse(context.Background(), cs, resp)
+	require.NoError(t, err)
+
+	assert.False(t, resp.BodyMutated(), "nil translated body means no body mutation")
+}
+
+func TestProcessResponse_ModelPassedToTranslator(t *testing.T) {
+	mock := &mockTranslator{}
+	p := newPluginWithMock("test-provider", mock)
+
+	cs := newCycleStateWithProvider("test-provider")
+	cs.Write(state.ModelKey, "my-model-name")
+
+	resp := framework.NewInferenceResponse()
+	resp.Body["data"] = "something"
+
+	err := p.ProcessResponse(context.Background(), cs, resp)
+	require.NoError(t, err)
+
+	assert.Equal(t, "my-model-name", mock.lastModel,
+		"model from CycleState must be passed to TranslateResponse")
+}
+
+func TestProcessResponse_TranslatorError(t *testing.T) {
+	mock := &mockTranslator{
+		respErr: fmt.Errorf("malformed response"),
+	}
+	p := newPluginWithMock("test-provider", mock)
+
+	cs := newCycleStateWithProvider("test-provider")
+
+	resp := framework.NewInferenceResponse()
+	resp.Body["data"] = "something"
+
+	err := p.ProcessResponse(context.Background(), cs, resp)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "malformed response")
+	assert.Contains(t, err.Error(), "test-provider")
+}
+
+func TestProcessResponse_UnknownProvider(t *testing.T) {
+	p := newTestPlugin()
+
+	cs := newCycleStateWithProvider("unknown")
+
+	resp := framework.NewInferenceResponse()
+	resp.Body["data"] = "something"
+
+	err := p.ProcessResponse(context.Background(), cs, resp)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported provider")
+}
+
+// ---------------------------------------------------------------------------
+// Factory
+// ---------------------------------------------------------------------------
+
 func TestFactory_Success(t *testing.T) {
 	p, err := APITranslationFactory("test-instance", nil, &testHandle{})
 	require.NoError(t, err)
 	assert.Equal(t, "test-instance", p.TypedName().Name)
 	assert.Equal(t, APITranslationPluginType, p.TypedName().Type)
 }
-
-type testHandle struct{}
-
-func (h *testHandle) Context() context.Context                { return context.Background() }
-func (h *testHandle) ClientReader() client.Reader             { return nil }
-func (h *testHandle) ReconcilerBuilder() *ctrlbuilder.Builder { return nil }
