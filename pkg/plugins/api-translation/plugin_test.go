@@ -130,7 +130,7 @@ func TestProcessRequest_AzureOpenAIProvider(t *testing.T) {
 	assert.NotContains(t, removed, "content-length")
 }
 
-func TestProcessResponse_AzureOpenAI(t *testing.T) {
+func TestProcessResponse_AzureOpenAI_CleanResponse(t *testing.T) {
 	p := NewAPITranslationPlugin()
 
 	cs := newCycleStateWithProvider("azure-openai")
@@ -159,8 +159,67 @@ func TestProcessResponse_AzureOpenAI(t *testing.T) {
 	err := p.ProcessResponse(context.Background(), cs, resp)
 	require.NoError(t, err)
 
-	// Azure OpenAI responses are already in OpenAI format — no mutation
-	assert.False(t, resp.BodyMutated())
+	assert.False(t, resp.BodyMutated(), "clean response without Azure-specific fields should not be mutated")
+}
+
+func TestProcessResponse_AzureOpenAI_StripsProviderFields(t *testing.T) {
+	p := NewAPITranslationPlugin()
+
+	cs := newCycleStateWithProvider("azure-openai")
+	cs.Write(state.ModelKey, "gpt-4o")
+
+	resp := framework.NewInferenceResponse()
+	resp.Body["id"] = "chatcmpl-abc123"
+	resp.Body["object"] = "chat.completion"
+	resp.Body["model"] = "gpt-4o"
+	resp.Body["choices"] = []any{
+		map[string]any{
+			"index": float64(0),
+			"message": map[string]any{
+				"role":    "assistant",
+				"content": "The answer is 4.",
+			},
+			"finish_reason": "stop",
+			"content_filter_results": map[string]any{
+				"hate":      map[string]any{"filtered": false, "severity": "safe"},
+				"self_harm": map[string]any{"filtered": false, "severity": "safe"},
+				"sexual":    map[string]any{"filtered": false, "severity": "safe"},
+				"violence":  map[string]any{"filtered": false, "severity": "safe"},
+			},
+		},
+	}
+	resp.Body["prompt_filter_results"] = []any{
+		map[string]any{
+			"prompt_index": float64(0),
+			"content_filter_results": map[string]any{
+				"hate":      map[string]any{"filtered": false, "severity": "safe"},
+				"self_harm": map[string]any{"filtered": false, "severity": "safe"},
+			},
+		},
+	}
+	resp.Body["usage"] = map[string]any{
+		"prompt_tokens":     float64(10),
+		"completion_tokens": float64(5),
+		"total_tokens":      float64(15),
+	}
+
+	err := p.ProcessResponse(context.Background(), cs, resp)
+	require.NoError(t, err)
+
+	assert.True(t, resp.BodyMutated())
+	assert.NotContains(t, resp.Body, "prompt_filter_results")
+
+	choices := resp.Body["choices"].([]any)
+	choice := choices[0].(map[string]any)
+	assert.NotContains(t, choice, "content_filter_results")
+
+	assert.Equal(t, "chatcmpl-abc123", resp.Body["id"])
+	assert.Equal(t, "chat.completion", resp.Body["object"])
+	assert.Equal(t, "gpt-4o", resp.Body["model"])
+	msg := choice["message"].(map[string]any)
+	assert.Equal(t, "assistant", msg["role"])
+	assert.Equal(t, "The answer is 4.", msg["content"])
+	assert.Equal(t, "stop", choice["finish_reason"])
 }
 
 func TestProcessRequest_UnknownProvider(t *testing.T) {

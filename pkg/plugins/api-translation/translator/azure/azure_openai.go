@@ -74,7 +74,29 @@ func (t *AzureOpenAITranslator) TranslateRequest(body map[string]any) (map[strin
 	return nil, headers, nil, nil
 }
 
-// TranslateResponse is a no-op since Azure OpenAI returns responses in OpenAI format.
+// TranslateResponse strips Azure-specific fields (content_filter_results, prompt_filter_results)
+// from the response body, returning a clean OpenAI-compatible response.
 func (t *AzureOpenAITranslator) TranslateResponse(body map[string]any, model string) (map[string]any, error) {
-	return nil, nil
+	mutated := false
+
+	if _, ok := body["prompt_filter_results"]; ok {
+		delete(body, "prompt_filter_results")
+		mutated = true
+	}
+
+	if choices, ok := body["choices"].([]any); ok {
+		for _, raw := range choices {
+			if choice, ok := raw.(map[string]any); ok {
+				if _, ok := choice["content_filter_results"]; ok {
+					delete(choice, "content_filter_results")
+					mutated = true
+				}
+			}
+		}
+	}
+
+	if !mutated {
+		return nil, nil
+	}
+	return body, nil
 }

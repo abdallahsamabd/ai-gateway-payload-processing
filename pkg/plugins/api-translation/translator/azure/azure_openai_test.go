@@ -17,8 +17,14 @@ limitations under the License.
 package azure
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -129,7 +135,7 @@ func TestTranslateRequest_InvalidModelCharacters(t *testing.T) {
 	}
 }
 
-func TestTranslateResponse_Passthrough(t *testing.T) {
+func TestTranslateResponse_CleanResponse(t *testing.T) {
 	body := map[string]any{
 		"id":      "chatcmpl-abc123",
 		"object":  "chat.completion",
@@ -154,7 +160,155 @@ func TestTranslateResponse_Passthrough(t *testing.T) {
 
 	translatedBody, err := NewAzureOpenAITranslator().TranslateResponse(body, "gpt-4o")
 	require.NoError(t, err)
-	assert.Nil(t, translatedBody, "Azure OpenAI response should not be mutated — already in OpenAI format")
+	assert.Nil(t, translatedBody, "clean response without Azure-specific fields should not be mutated")
+}
+
+func TestTranslateResponse_StripsContentFilterResults(t *testing.T) {
+	body := map[string]any{
+		"id":      "chatcmpl-abc123",
+		"object":  "chat.completion",
+		"created": float64(1700000000),
+		"model":   "gpt-4o",
+		"choices": []any{
+			map[string]any{
+				"index": float64(0),
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": "The answer is 4.",
+				},
+				"finish_reason": "stop",
+				"content_filter_results": map[string]any{
+					"hate":      map[string]any{"filtered": false, "severity": "safe"},
+					"self_harm": map[string]any{"filtered": false, "severity": "safe"},
+					"sexual":    map[string]any{"filtered": false, "severity": "safe"},
+					"violence":  map[string]any{"filtered": false, "severity": "safe"},
+				},
+			},
+		},
+		"usage": map[string]any{
+			"prompt_tokens":     float64(10),
+			"completion_tokens": float64(5),
+			"total_tokens":      float64(15),
+		},
+	}
+
+	translatedBody, err := NewAzureOpenAITranslator().TranslateResponse(body, "gpt-4o")
+	require.NoError(t, err)
+	require.NotNil(t, translatedBody)
+
+	choices := translatedBody["choices"].([]any)
+	choice := choices[0].(map[string]any)
+	assert.NotContains(t, choice, "content_filter_results")
+
+	assert.Equal(t, "chatcmpl-abc123", translatedBody["id"])
+	assert.Equal(t, "chat.completion", translatedBody["object"])
+	msg := choice["message"].(map[string]any)
+	assert.Equal(t, "assistant", msg["role"])
+	assert.Equal(t, "The answer is 4.", msg["content"])
+	assert.Equal(t, "stop", choice["finish_reason"])
+}
+
+func TestTranslateResponse_StripsPromptFilterResults(t *testing.T) {
+	body := map[string]any{
+		"id":      "chatcmpl-abc123",
+		"object":  "chat.completion",
+		"created": float64(1700000000),
+		"model":   "gpt-4o",
+		"choices": []any{
+			map[string]any{
+				"index": float64(0),
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": "Hello!",
+				},
+				"finish_reason": "stop",
+			},
+		},
+		"prompt_filter_results": []any{
+			map[string]any{
+				"prompt_index": float64(0),
+				"content_filter_results": map[string]any{
+					"hate":      map[string]any{"filtered": false, "severity": "safe"},
+					"self_harm": map[string]any{"filtered": false, "severity": "safe"},
+				},
+			},
+		},
+		"usage": map[string]any{
+			"prompt_tokens":     float64(8),
+			"completion_tokens": float64(2),
+			"total_tokens":      float64(10),
+		},
+	}
+
+	translatedBody, err := NewAzureOpenAITranslator().TranslateResponse(body, "gpt-4o")
+	require.NoError(t, err)
+	require.NotNil(t, translatedBody)
+
+	assert.NotContains(t, translatedBody, "prompt_filter_results")
+	assert.Equal(t, "chatcmpl-abc123", translatedBody["id"])
+	assert.Contains(t, translatedBody, "usage")
+}
+
+func TestTranslateResponse_StripsBothAzureFields(t *testing.T) {
+	body := map[string]any{
+		"id":      "chatcmpl-abc123",
+		"object":  "chat.completion",
+		"created": float64(1700000000),
+		"model":   "gpt-4o",
+		"choices": []any{
+			map[string]any{
+				"index": float64(0),
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": "The answer is 4.",
+				},
+				"finish_reason": "stop",
+				"content_filter_results": map[string]any{
+					"hate":      map[string]any{"filtered": false, "severity": "safe"},
+					"self_harm": map[string]any{"filtered": false, "severity": "safe"},
+					"sexual":    map[string]any{"filtered": false, "severity": "safe"},
+					"violence":  map[string]any{"filtered": false, "severity": "safe"},
+				},
+			},
+		},
+		"prompt_filter_results": []any{
+			map[string]any{
+				"prompt_index": float64(0),
+				"content_filter_results": map[string]any{
+					"hate":      map[string]any{"filtered": false, "severity": "safe"},
+					"self_harm": map[string]any{"filtered": false, "severity": "safe"},
+					"sexual":    map[string]any{"filtered": false, "severity": "safe"},
+					"violence":  map[string]any{"filtered": false, "severity": "safe"},
+				},
+			},
+		},
+		"usage": map[string]any{
+			"prompt_tokens":     float64(10),
+			"completion_tokens": float64(5),
+			"total_tokens":      float64(15),
+		},
+	}
+
+	translatedBody, err := NewAzureOpenAITranslator().TranslateResponse(body, "gpt-4o")
+	require.NoError(t, err)
+	require.NotNil(t, translatedBody)
+
+	assert.NotContains(t, translatedBody, "prompt_filter_results")
+
+	choices := translatedBody["choices"].([]any)
+	choice := choices[0].(map[string]any)
+	assert.NotContains(t, choice, "content_filter_results")
+
+	assert.Equal(t, "chatcmpl-abc123", translatedBody["id"])
+	assert.Equal(t, "chat.completion", translatedBody["object"])
+	assert.Equal(t, float64(1700000000), translatedBody["created"])
+	assert.Equal(t, "gpt-4o", translatedBody["model"])
+	assert.Contains(t, translatedBody, "usage")
+
+	msg := choice["message"].(map[string]any)
+	assert.Equal(t, "assistant", msg["role"])
+	assert.Equal(t, "The answer is 4.", msg["content"])
+	assert.Equal(t, "stop", choice["finish_reason"])
 }
 
 func TestTranslateResponse_EmptyBody(t *testing.T) {
@@ -177,4 +331,141 @@ func TestTranslateResponse_ErrorPassthrough(t *testing.T) {
 	translatedBody, err := NewAzureOpenAITranslator().TranslateResponse(body, "gpt-4o")
 	require.NoError(t, err)
 	assert.Nil(t, translatedBody, "Azure error responses are already in OpenAI format")
+}
+
+func TestTranslateResponse_StreamingChunkPassthrough(t *testing.T) {
+	body := map[string]any{
+		"id":      "chatcmpl-abc123",
+		"object":  "chat.completion.chunk",
+		"created": float64(1700000000),
+		"model":   "gpt-4o",
+		"choices": []any{
+			map[string]any{
+				"index": float64(0),
+				"delta": map[string]any{
+					"content": "Hello",
+				},
+				"finish_reason": nil,
+			},
+		},
+	}
+
+	translatedBody, err := NewAzureOpenAITranslator().TranslateResponse(body, "gpt-4o")
+	require.NoError(t, err)
+	assert.Nil(t, translatedBody)
+}
+
+func TestTranslateResponse_StreamingChunkStripsAzureFields(t *testing.T) {
+	body := map[string]any{
+		"id":      "chatcmpl-abc123",
+		"object":  "chat.completion.chunk",
+		"created": float64(1700000000),
+		"model":   "gpt-4o",
+		"choices": []any{
+			map[string]any{
+				"index": float64(0),
+				"delta": map[string]any{
+					"content": "Hello",
+				},
+				"finish_reason": nil,
+				"content_filter_results": map[string]any{
+					"hate":      map[string]any{"filtered": false, "severity": "safe"},
+					"self_harm": map[string]any{"filtered": false, "severity": "safe"},
+				},
+			},
+		},
+		"prompt_filter_results": []any{
+			map[string]any{
+				"prompt_index": float64(0),
+				"content_filter_results": map[string]any{
+					"hate": map[string]any{"filtered": false, "severity": "safe"},
+				},
+			},
+		},
+	}
+
+	translatedBody, err := NewAzureOpenAITranslator().TranslateResponse(body, "gpt-4o")
+	require.NoError(t, err)
+	require.NotNil(t, translatedBody)
+
+	assert.NotContains(t, translatedBody, "prompt_filter_results")
+	choices := translatedBody["choices"].([]any)
+	choice := choices[0].(map[string]any)
+	assert.NotContains(t, choice, "content_filter_results")
+	assert.Equal(t, "chat.completion.chunk", translatedBody["object"])
+}
+
+// TestTranslateResponse_LiveMockIntegration fetches a real Azure OpenAI response from
+// the llm-katan mock server and verifies that TranslateResponse strips Azure-specific fields.
+// Set LLM_KATAN_URL to enable (e.g. LLM_KATAN_URL=http://3.150.113.9:8000).
+func TestTranslateResponse_LiveMockIntegration(t *testing.T) {
+	baseURL := os.Getenv("LLM_KATAN_URL")
+	if baseURL == "" {
+		t.Skip("LLM_KATAN_URL not set, skipping live mock integration test")
+	}
+
+	reqBody, _ := json.Marshal(map[string]any{
+		"model":    "gpt-4o",
+		"messages": []any{map[string]any{"role": "user", "content": "What is 2+2?"}},
+	})
+
+	url := baseURL + "/openai/deployments/gpt-4o/chat/completions?api-version=2024-10-21"
+	req, err := http.NewRequest("POST", url, bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("api-key", "test-key")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err, "failed to reach llm-katan at %s", baseURL)
+	defer func() { _ = resp.Body.Close() }()
+
+	respBytes, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	t.Logf("Raw Azure response (status %d):\n%s", resp.StatusCode, string(respBytes))
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(respBytes, &body))
+
+	hasPromptFilter := body["prompt_filter_results"] != nil
+	hasContentFilter := false
+	if choices, ok := body["choices"].([]any); ok {
+		for _, raw := range choices {
+			if choice, ok := raw.(map[string]any); ok {
+				if choice["content_filter_results"] != nil {
+					hasContentFilter = true
+					break
+				}
+			}
+		}
+	}
+	t.Logf("Azure-specific fields present: prompt_filter_results=%v, content_filter_results=%v",
+		hasPromptFilter, hasContentFilter)
+
+	translatedBody, err := NewAzureOpenAITranslator().TranslateResponse(body, "gpt-4o")
+	require.NoError(t, err)
+
+	if hasPromptFilter || hasContentFilter {
+		require.NotNil(t, translatedBody, "body should be mutated when Azure fields are present")
+
+		cleanJSON, _ := json.MarshalIndent(translatedBody, "", "  ")
+		t.Logf("Cleaned response:\n%s", string(cleanJSON))
+
+		assert.NotContains(t, translatedBody, "prompt_filter_results")
+		if choices, ok := translatedBody["choices"].([]any); ok {
+			for i, raw := range choices {
+				choice := raw.(map[string]any)
+				assert.NotContains(t, choice, "content_filter_results",
+					"content_filter_results should be stripped from choices[%d]", i)
+			}
+		}
+	} else {
+		t.Log("Mock server did not include Azure-specific fields; verifying passthrough")
+		assert.Nil(t, translatedBody)
+	}
+
+	assert.Contains(t, body, "choices")
+	assert.Contains(t, body, "id")
+	assert.Contains(t, body, "object")
 }
