@@ -57,7 +57,7 @@ func NewAPITranslationPlugin() *APITranslationPlugin {
 		providers: map[string]translator.Translator{
 			provider.OpenAI:        openai.NewOpenAITranslator(),
 			provider.Anthropic:     anthropic.NewAnthropicTranslator(),
-			provider.AzureOpenAI:   azure.NewAzureOpenAITranslator(),
+			provider.AzureOpenAI:   azure.NewAzureOpenAITranslator(azure.DefaultResponseFieldsToStrip),
 			provider.Vertex:        vertex.NewVertexTranslator(),
 			provider.BedrockOpenAI: bedrock.NewBedrockOpenAITranslator(),
 		},

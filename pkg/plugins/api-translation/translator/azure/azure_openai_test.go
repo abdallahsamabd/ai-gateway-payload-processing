@@ -46,7 +46,7 @@ func TestTranslateRequest_BodyPassthrough(t *testing.T) {
 		"frequency_penalty": 0.3,
 	}
 
-	translatedBody, headers, headersToRemove, err := NewAzureOpenAITranslator().TranslateRequest(body)
+	translatedBody, headers, headersToRemove, err := NewAzureOpenAITranslator(DefaultResponseFieldsToStrip).TranslateRequest(body)
 	require.NoError(t, err)
 
 	assert.Nil(t, translatedBody, "body should not be mutated for Azure OpenAI")
@@ -77,7 +77,7 @@ func TestTranslateRequest_FixedPathForAnyModel(t *testing.T) {
 				"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
 			}
 
-			_, headers, _, err := NewAzureOpenAITranslator().TranslateRequest(body)
+			_, headers, _, err := NewAzureOpenAITranslator(DefaultResponseFieldsToStrip).TranslateRequest(body)
 			require.NoError(t, err)
 
 			assert.Equal(t, "/openai/v1/chat/completions", headers[":path"],
@@ -91,7 +91,7 @@ func TestTranslateRequest_MissingModel(t *testing.T) {
 		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
 	}
 
-	_, _, _, err := NewAzureOpenAITranslator().TranslateRequest(body)
+	_, _, _, err := NewAzureOpenAITranslator(DefaultResponseFieldsToStrip).TranslateRequest(body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "model")
 }
@@ -102,7 +102,7 @@ func TestTranslateRequest_EmptyModel(t *testing.T) {
 		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
 	}
 
-	_, _, _, err := NewAzureOpenAITranslator().TranslateRequest(body)
+	_, _, _, err := NewAzureOpenAITranslator(DefaultResponseFieldsToStrip).TranslateRequest(body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "model")
 }
@@ -130,7 +130,7 @@ func TestTranslateResponse_CleanResponse(t *testing.T) {
 		},
 	}
 
-	translatedBody, err := NewAzureOpenAITranslator().TranslateResponse(body, "gpt-4o")
+	translatedBody, err := NewAzureOpenAITranslator(DefaultResponseFieldsToStrip).TranslateResponse(body, "gpt-4o")
 	require.NoError(t, err)
 	assert.Nil(t, translatedBody, "clean response without Azure-specific fields should not be mutated")
 }
@@ -164,7 +164,7 @@ func TestTranslateResponse_StripsContentFilterResults(t *testing.T) {
 		},
 	}
 
-	translatedBody, err := NewAzureOpenAITranslator().TranslateResponse(body, "gpt-4o")
+	translatedBody, err := NewAzureOpenAITranslator(DefaultResponseFieldsToStrip).TranslateResponse(body, "gpt-4o")
 	require.NoError(t, err)
 	require.NotNil(t, translatedBody)
 
@@ -212,7 +212,7 @@ func TestTranslateResponse_StripsPromptFilterResults(t *testing.T) {
 		},
 	}
 
-	translatedBody, err := NewAzureOpenAITranslator().TranslateResponse(body, "gpt-4o")
+	translatedBody, err := NewAzureOpenAITranslator(DefaultResponseFieldsToStrip).TranslateResponse(body, "gpt-4o")
 	require.NoError(t, err)
 	require.NotNil(t, translatedBody)
 
@@ -261,7 +261,7 @@ func TestTranslateResponse_StripsBothAzureFields(t *testing.T) {
 		},
 	}
 
-	translatedBody, err := NewAzureOpenAITranslator().TranslateResponse(body, "gpt-4o")
+	translatedBody, err := NewAzureOpenAITranslator(DefaultResponseFieldsToStrip).TranslateResponse(body, "gpt-4o")
 	require.NoError(t, err)
 	require.NotNil(t, translatedBody)
 
@@ -286,7 +286,7 @@ func TestTranslateResponse_StripsBothAzureFields(t *testing.T) {
 func TestTranslateResponse_EmptyBody(t *testing.T) {
 	body := map[string]any{}
 
-	translatedBody, err := NewAzureOpenAITranslator().TranslateResponse(body, "gpt-4o")
+	translatedBody, err := NewAzureOpenAITranslator(DefaultResponseFieldsToStrip).TranslateResponse(body, "gpt-4o")
 	require.NoError(t, err)
 	assert.Nil(t, translatedBody)
 }
@@ -300,7 +300,7 @@ func TestTranslateResponse_ErrorPassthrough(t *testing.T) {
 		},
 	}
 
-	translatedBody, err := NewAzureOpenAITranslator().TranslateResponse(body, "gpt-4o")
+	translatedBody, err := NewAzureOpenAITranslator(DefaultResponseFieldsToStrip).TranslateResponse(body, "gpt-4o")
 	require.NoError(t, err)
 	assert.Nil(t, translatedBody, "Azure error responses are already in OpenAI format")
 }
@@ -322,7 +322,7 @@ func TestTranslateResponse_StreamingChunkPassthrough(t *testing.T) {
 		},
 	}
 
-	translatedBody, err := NewAzureOpenAITranslator().TranslateResponse(body, "gpt-4o")
+	translatedBody, err := NewAzureOpenAITranslator(DefaultResponseFieldsToStrip).TranslateResponse(body, "gpt-4o")
 	require.NoError(t, err)
 	assert.Nil(t, translatedBody)
 }
@@ -356,7 +356,7 @@ func TestTranslateResponse_StreamingChunkStripsAzureFields(t *testing.T) {
 		},
 	}
 
-	translatedBody, err := NewAzureOpenAITranslator().TranslateResponse(body, "gpt-4o")
+	translatedBody, err := NewAzureOpenAITranslator(DefaultResponseFieldsToStrip).TranslateResponse(body, "gpt-4o")
 	require.NoError(t, err)
 	require.NotNil(t, translatedBody)
 
@@ -415,7 +415,7 @@ func TestTranslateResponse_LiveMockIntegration(t *testing.T) {
 	t.Logf("Azure-specific fields present: prompt_filter_results=%v, content_filter_results=%v",
 		hasPromptFilter, hasContentFilter)
 
-	translatedBody, err := NewAzureOpenAITranslator().TranslateResponse(body, "gpt-4o")
+	translatedBody, err := NewAzureOpenAITranslator(DefaultResponseFieldsToStrip).TranslateResponse(body, "gpt-4o")
 	require.NoError(t, err)
 
 	if hasPromptFilter || hasContentFilter {

@@ -28,18 +28,38 @@ const (
 	azureChatCompletionsPath = "/openai/v1/chat/completions"
 )
 
+// DefaultResponseFieldsToStrip is the default set of Azure-specific response fields to remove.
+// Paths use dot-separated segments; a "[]" suffix means "iterate array elements."
+//
+// Examples:
+//
+//	"prompt_filter_results"            → deletes the top-level key
+//	"choices[].content_filter_results" → iterates choices and deletes from each element
+var DefaultResponseFieldsToStrip = []string{
+	"prompt_filter_results",
+	"choices[].content_filter_results",
+}
+
 // compile-time interface check
 var _ translator.Translator = &AzureOpenAITranslator{}
 
-// NewAzureOpenAITranslator initializes a new AzureOpenAITranslator and returns its pointer.
-func NewAzureOpenAITranslator() *AzureOpenAITranslator {
-	return &AzureOpenAITranslator{}
+// NewAzureOpenAITranslator initializes a new AzureOpenAITranslator.
+// responseFieldsToStrip defines which provider-specific fields to remove from responses,
+// using dot-separated paths with "[]" to denote array traversal.
+// Pass nil or an empty slice for no stripping (no-op response translation).
+func NewAzureOpenAITranslator(responseFieldsToStrip []string) *AzureOpenAITranslator {
+	return &AzureOpenAITranslator{
+		stripper: translator.NewResponseFieldStripper(responseFieldsToStrip),
+	}
 }
 
 // AzureOpenAITranslator translates between OpenAI Chat Completions format and
 // Azure OpenAI Service format. Azure OpenAI uses the same request/response schema
-// as OpenAI, so translation is limited to path rewriting and header adjustments.
-type AzureOpenAITranslator struct{}
+// as OpenAI, so translation is limited to path rewriting, header adjustments,
+// and stripping provider-specific response fields.
+type AzureOpenAITranslator struct {
+	stripper *translator.ResponseFieldStripper
+}
 
 // TranslateRequest rewrites the path and headers for Azure OpenAI v1 API.
 // The request body is not mutated since Azure OpenAI accepts the same schema as OpenAI.
@@ -57,29 +77,8 @@ func (t *AzureOpenAITranslator) TranslateRequest(body map[string]any) (map[strin
 	return nil, headers, nil, nil
 }
 
-// TranslateResponse strips Azure-specific fields (content_filter_results, prompt_filter_results)
-// from the response body, returning a clean OpenAI-compatible response.
+// TranslateResponse strips configured provider-specific fields from the response body.
 func (t *AzureOpenAITranslator) TranslateResponse(body map[string]any, model string) (map[string]any, error) {
-	mutated := false
-
-	if _, ok := body["prompt_filter_results"]; ok {
-		delete(body, "prompt_filter_results")
-		mutated = true
-	}
-
-	if choices, ok := body["choices"].([]any); ok {
-		for _, raw := range choices {
-			if choice, ok := raw.(map[string]any); ok {
-				if _, ok := choice["content_filter_results"]; ok {
-					delete(choice, "content_filter_results")
-					mutated = true
-				}
-			}
-		}
-	}
-
-	if !mutated {
-		return nil, nil
-	}
-	return body, nil
+	result, _ := t.stripper.Strip(body)
+	return result, nil
 }
