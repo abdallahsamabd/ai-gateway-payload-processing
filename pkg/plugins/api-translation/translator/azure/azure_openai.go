@@ -19,6 +19,7 @@ package azure
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator"
 )
@@ -34,23 +35,41 @@ const (
 	azurePathTemplate = "/openai/deployments/%s/chat/completions?api-version=%s"
 )
 
+// DefaultResponseFieldsToStrip is the default set of Azure-specific response fields to remove.
+// Paths use dot-separated segments; a "[]" suffix means "iterate array elements."
+//
+// Examples:
+//
+//	"prompt_filter_results"            → deletes the top-level key
+//	"choices[].content_filter_results" → iterates choices and deletes from each element
+var DefaultResponseFieldsToStrip = []string{
+	"prompt_filter_results",
+	"choices[].content_filter_results",
+}
+
 // compile-time interface check
 var _ translator.Translator = &AzureOpenAITranslator{}
 
-// NewAzureOpenAITranslator initializes a new AzureOpenAITranslator and returns its pointer.
-func NewAzureOpenAITranslator() *AzureOpenAITranslator {
+// NewAzureOpenAITranslator initializes a new AzureOpenAITranslator.
+// responseFieldsToStrip defines which provider-specific fields to remove from responses,
+// using dot-separated paths with "[]" to denote array traversal.
+// Pass nil or an empty slice for no stripping (no-op response translation).
+func NewAzureOpenAITranslator(responseFieldsToStrip []string) *AzureOpenAITranslator {
 	return &AzureOpenAITranslator{
 		apiVersion:          defaultAPIVersion,
-		deploymentIDPattern: regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`), // deploymentIDPattern validates Azure deployment IDs to prevent path/query injection.
+		deploymentIDPattern: regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`),
+		fieldPaths:          parseFieldPaths(responseFieldsToStrip),
 	}
 }
 
 // AzureOpenAITranslator translates between OpenAI Chat Completions format and
 // Azure OpenAI Service format. Azure OpenAI uses the same request/response schema
-// as OpenAI, so translation is limited to path rewriting and header adjustments.
+// as OpenAI, so translation is limited to path rewriting, header adjustments,
+// and stripping provider-specific response fields.
 type AzureOpenAITranslator struct {
 	apiVersion          string
 	deploymentIDPattern *regexp.Regexp
+	fieldPaths          []fieldPath
 }
 
 // TranslateRequest rewrites the path and headers for Azure OpenAI.
@@ -74,29 +93,88 @@ func (t *AzureOpenAITranslator) TranslateRequest(body map[string]any) (map[strin
 	return nil, headers, nil, nil
 }
 
-// TranslateResponse strips Azure-specific fields (content_filter_results, prompt_filter_results)
-// from the response body, returning a clean OpenAI-compatible response.
+// TranslateResponse walks the configured field paths and strips matching
+// provider-specific fields from the response body.
 func (t *AzureOpenAITranslator) TranslateResponse(body map[string]any, model string) (map[string]any, error) {
 	mutated := false
-
-	if _, ok := body["prompt_filter_results"]; ok {
-		delete(body, "prompt_filter_results")
-		mutated = true
-	}
-
-	if choices, ok := body["choices"].([]any); ok {
-		for _, raw := range choices {
-			if choice, ok := raw.(map[string]any); ok {
-				if _, ok := choice["content_filter_results"]; ok {
-					delete(choice, "content_filter_results")
-					mutated = true
-				}
-			}
+	for _, fp := range t.fieldPaths {
+		if stripField(body, fp, 0) {
+			mutated = true
 		}
 	}
-
 	if !mutated {
 		return nil, nil
 	}
 	return body, nil
+}
+
+// --- field-path helpers ---
+
+// fieldSegment represents one segment of a dot-separated strip path.
+type fieldSegment struct {
+	key     string
+	isArray bool // true when the segment had a "[]" suffix
+}
+
+// fieldPath is a parsed sequence of segments.
+type fieldPath []fieldSegment
+
+// parseFieldPaths converts raw dot-separated path strings into parsed fieldPaths.
+func parseFieldPaths(raw []string) []fieldPath {
+	paths := make([]fieldPath, 0, len(raw))
+	for _, r := range raw {
+		parts := strings.Split(r, ".")
+		segments := make(fieldPath, 0, len(parts))
+		for _, p := range parts {
+			if strings.HasSuffix(p, "[]") {
+				segments = append(segments, fieldSegment{key: strings.TrimSuffix(p, "[]"), isArray: true})
+			} else {
+				segments = append(segments, fieldSegment{key: p})
+			}
+		}
+		paths = append(paths, segments)
+	}
+	return paths
+}
+
+// stripField recursively walks the body according to the parsed path and deletes
+// the leaf key. Returns true if at least one deletion occurred.
+func stripField(obj map[string]any, path fieldPath, idx int) bool {
+	if idx >= len(path) {
+		return false
+	}
+
+	seg := path[idx]
+	isLast := idx == len(path)-1
+
+	if isLast {
+		if _, ok := obj[seg.key]; ok {
+			delete(obj, seg.key)
+			return true
+		}
+		return false
+	}
+
+	// Intermediate segment — descend into map or iterate array.
+	if seg.isArray {
+		arr, ok := obj[seg.key].([]any)
+		if !ok {
+			return false
+		}
+		mutated := false
+		for _, elem := range arr {
+			if m, ok := elem.(map[string]any); ok {
+				if stripField(m, path, idx+1) {
+					mutated = true
+				}
+			}
+		}
+		return mutated
+	}
+
+	child, ok := obj[seg.key].(map[string]any)
+	if !ok {
+		return false
+	}
+	return stripField(child, path, idx+1)
 }
