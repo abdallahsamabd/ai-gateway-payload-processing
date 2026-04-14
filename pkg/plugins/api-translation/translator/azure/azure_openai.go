@@ -18,20 +18,14 @@ package azure
 
 import (
 	"fmt"
-	"regexp"
 
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator"
 )
 
 const (
-	// defaultAPIVersion is the default Azure OpenAI API version.
-	// Reference: https://learn.microsoft.com/en-us/azure/ai-services/openai/reference
-	defaultAPIVersion = "2024-10-21"
-
-	// Azure OpenAI endpoint path template.
-	// The deployment ID typically matches the deployed model name.
-	// Reference: https://learn.microsoft.com/en-us/azure/ai-foundry/openai/reference#chat-completions
-	azurePathTemplate = "/openai/deployments/%s/chat/completions?api-version=%s"
+	// Azure OpenAI v1 API chat completions path.
+	// Reference: https://learn.microsoft.com/en-us/azure/foundry/openai/latest#create-chat-completion
+	azureChatCompletionsPath = "/openai/v1/chat/completions"
 )
 
 // compile-time interface check
@@ -39,38 +33,27 @@ var _ translator.Translator = &AzureOpenAITranslator{}
 
 // NewAzureOpenAITranslator initializes a new AzureOpenAITranslator and returns its pointer.
 func NewAzureOpenAITranslator() *AzureOpenAITranslator {
-	return &AzureOpenAITranslator{
-		apiVersion:          defaultAPIVersion,
-		deploymentIDPattern: regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`), // deploymentIDPattern validates Azure deployment IDs to prevent path/query injection.
-	}
+	return &AzureOpenAITranslator{}
 }
 
 // AzureOpenAITranslator translates between OpenAI Chat Completions format and
 // Azure OpenAI Service format. Azure OpenAI uses the same request/response schema
 // as OpenAI, so translation is limited to path rewriting and header adjustments.
-type AzureOpenAITranslator struct {
-	apiVersion          string
-	deploymentIDPattern *regexp.Regexp
-}
+type AzureOpenAITranslator struct{}
 
-// TranslateRequest rewrites the path and headers for Azure OpenAI.
+// TranslateRequest rewrites the path and headers for Azure OpenAI v1 API.
 // The request body is not mutated since Azure OpenAI accepts the same schema as OpenAI.
-// Azure ignores the model field in the body and uses the deployment ID from the URI path.
 func (t *AzureOpenAITranslator) TranslateRequest(body map[string]any) (map[string]any, map[string]string, []string, error) {
 	model, _ := body["model"].(string)
 	if model == "" {
 		return nil, nil, nil, fmt.Errorf("model field is required")
 	}
-	if !t.deploymentIDPattern.MatchString(model) {
-		return nil, nil, nil, fmt.Errorf("model '%s' contains invalid characters for Azure deployment ID", model)
-	}
 
 	headers := map[string]string{
-		":path":        fmt.Sprintf(azurePathTemplate, model, t.apiVersion),
+		":path":        azureChatCompletionsPath,
 		"content-type": "application/json",
 	}
 
-	// Return nil body — no body mutation is needed, Azure accepts the OpenAI request format as-is.
 	return nil, headers, nil, nil
 }
 

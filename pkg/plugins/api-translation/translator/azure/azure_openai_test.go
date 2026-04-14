@@ -19,7 +19,6 @@ package azure
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -52,14 +51,13 @@ func TestTranslateRequest_BodyPassthrough(t *testing.T) {
 
 	assert.Nil(t, translatedBody, "body should not be mutated for Azure OpenAI")
 
-	expectedPath := fmt.Sprintf("/openai/deployments/gpt-4o/chat/completions?api-version=%s", defaultAPIVersion)
-	assert.Equal(t, expectedPath, headers[":path"])
+	assert.Equal(t, "/openai/v1/chat/completions", headers[":path"])
 	assert.Equal(t, "application/json", headers["content-type"])
 	assert.Len(t, headers, 2)
 	assert.Nil(t, headersToRemove)
 }
 
-func TestTranslateRequest_ModelUsedAsDeploymentID(t *testing.T) {
+func TestTranslateRequest_FixedPathForAnyModel(t *testing.T) {
 	tests := []struct {
 		name  string
 		model string
@@ -69,6 +67,7 @@ func TestTranslateRequest_ModelUsedAsDeploymentID(t *testing.T) {
 		{"custom deployment name", "my-custom-deployment"},
 		{"with dots", "gpt-4o.2025"},
 		{"with underscore", "my_deployment"},
+		{"with slash", "org/model-name"},
 	}
 
 	for _, tt := range tests {
@@ -81,8 +80,8 @@ func TestTranslateRequest_ModelUsedAsDeploymentID(t *testing.T) {
 			_, headers, _, err := NewAzureOpenAITranslator().TranslateRequest(body)
 			require.NoError(t, err)
 
-			expectedPath := fmt.Sprintf("/openai/deployments/%s/chat/completions?api-version=%s", tt.model, defaultAPIVersion)
-			assert.Equal(t, expectedPath, headers[":path"])
+			assert.Equal(t, "/openai/v1/chat/completions", headers[":path"],
+				"path should be fixed regardless of model name")
 		})
 	}
 }
@@ -106,33 +105,6 @@ func TestTranslateRequest_EmptyModel(t *testing.T) {
 	_, _, _, err := NewAzureOpenAITranslator().TranslateRequest(body)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "model")
-}
-
-func TestTranslateRequest_InvalidModelCharacters(t *testing.T) {
-	tests := []struct {
-		name  string
-		model string
-	}{
-		{"query injection", "gpt-4o?api-version=hijacked&x="},
-		{"path traversal", "../../../etc/passwd"},
-		{"slash in model", "org/model-name"},
-		{"space in model", "gpt 4o"},
-		{"starts with hyphen", "-gpt-4o"},
-		{"starts with dot", ".hidden"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			body := map[string]any{
-				"model":    tt.model,
-				"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
-			}
-
-			_, _, _, err := NewAzureOpenAITranslator().TranslateRequest(body)
-			assert.Error(t, err)
-			assert.Contains(t, err.Error(), "invalid characters")
-		})
-	}
 }
 
 func TestTranslateResponse_CleanResponse(t *testing.T) {
@@ -409,7 +381,7 @@ func TestTranslateResponse_LiveMockIntegration(t *testing.T) {
 		"messages": []any{map[string]any{"role": "user", "content": "What is 2+2?"}},
 	})
 
-	url := baseURL + "/openai/deployments/gpt-4o/chat/completions?api-version=2024-10-21"
+	url := baseURL + "/openai/v1/chat/completions"
 	req, err := http.NewRequest("POST", url, bytes.NewReader(reqBody))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")

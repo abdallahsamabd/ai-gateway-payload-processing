@@ -25,7 +25,7 @@ llm-katan --model Qwen/Qwen3-0.6B --providers openai,anthropic,vertexai,bedrock,
 | Vertex AI / Gemini | `POST /v1beta/models/{model}:generateContent` | `Authorization: Bearer <token>` |
 | AWS Bedrock | `POST /model/{modelId}/converse` | `Authorization: AWS4-HMAC-SHA256 <sig>` |
 | AWS Bedrock | `POST /model/{modelId}/invoke` | `Authorization: AWS4-HMAC-SHA256 <sig>` |
-| Azure OpenAI | `POST /openai/deployments/{id}/chat/completions` | `api-key: <key>` |
+| Azure OpenAI | `POST /openai/v1/chat/completions` | `api-key: <key>` |
 
 All endpoints require auth headers. All endpoints support streaming.
 
@@ -111,10 +111,10 @@ curl -X POST http://localhost:8000/model/anthropic.claude-v2/invoke \
 
 ### Azure OpenAI
 ```bash
-curl -X POST http://localhost:8000/openai/deployments/gpt-4/chat/completions?api-version=2024-10-21 \
+curl -X POST http://localhost:8000/openai/v1/chat/completions \
   -H "api-key: test-key" \
   -H "Content-Type: application/json" \
-  -d '{"messages":[{"role":"user","content":"Hello"}]}'
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
 ## Shared Endpoints

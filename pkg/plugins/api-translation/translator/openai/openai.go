@@ -30,7 +30,7 @@ const (
 // compile-time interface check
 var _ translator.Translator = &OpenAITranslator{}
 
-// NewAzureOpenAITranslator initializes a new OpenAITranslator and returns its pointer.
+// NewOpenAITranslator initializes a new OpenAITranslator and returns its pointer.
 func NewOpenAITranslator() *OpenAITranslator {
 	return &OpenAITranslator{}
 }
@@ -50,7 +50,7 @@ func (t *OpenAITranslator) TranslateRequest(body map[string]any) (map[string]any
 		":path": openAIPath, // needed in case the original request uses different relative path and include the model.
 	}
 
-	// Return nil body — no body mutation is needed, Azure accepts the OpenAI request format as-is.
+	// Return nil body — no body mutation is needed, OpenAI request format is used as-is.
 	return nil, headers, nil, nil
 }
 

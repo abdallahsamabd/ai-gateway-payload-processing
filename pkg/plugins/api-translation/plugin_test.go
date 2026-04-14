@@ -122,7 +122,7 @@ func TestProcessRequest_AzureOpenAIProvider(t *testing.T) {
 	assert.Equal(t, 0.7, req.Body["temperature"])
 
 	mutated := req.MutatedHeaders()
-	assert.Equal(t, "/openai/deployments/gpt-4o/chat/completions?api-version=2024-10-21", mutated[":path"])
+	assert.Equal(t, "/openai/v1/chat/completions", mutated[":path"])
 	assert.Equal(t, "application/json", mutated["content-type"])
 
 	removed := req.RemovedHeaders()

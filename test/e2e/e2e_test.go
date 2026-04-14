@@ -22,10 +22,10 @@ type Provider struct {
 // simulatorKey maps provider names to llm-katan default keys.
 // These match the DEFAULT_API_KEYS in llm-katan's config.py.
 var simulatorKeys = map[string]string{
-	"openai":       "llm-katan-openai-key",
-	"anthropic":    "llm-katan-anthropic-key",
-	"azure-openai": "llm-katan-azure-key",
-	"vertex":       "llm-katan-vertexai-key",
+	"openai":         "llm-katan-openai-key",
+	"anthropic":      "llm-katan-anthropic-key",
+	"azure-openai":   "llm-katan-azure-key",
+	"vertex":         "llm-katan-vertexai-key",
 	"bedrock-openai": "llm-katan-bedrock-key",
 }
 
