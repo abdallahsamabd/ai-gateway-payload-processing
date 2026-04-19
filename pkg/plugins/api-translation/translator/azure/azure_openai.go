@@ -31,7 +31,7 @@ const (
 // compile-time interface check
 var _ translator.Translator = &AzureOpenAITranslator{}
 
-// NewAzureOpenAITranslator initializes a new AzureOpenAITranslator.
+// NewAzureOpenAITranslator initializes a new AzureOpenAITranslator and returns its pointer.
 func NewAzureOpenAITranslator() *AzureOpenAITranslator {
 	return &AzureOpenAITranslator{
 		stripper: translator.NewResponseFieldStripper([]string{
