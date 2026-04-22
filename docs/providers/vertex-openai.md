@@ -46,12 +46,20 @@ kubectl create secret generic vertex-api-key -n llm \
 | Field | Value |
 |-------|-------|
 | Provider type | `vertex-openai` |
-| Endpoint | `{region}-aiplatform.googleapis.com` (e.g., `us-central1-aiplatform.googleapis.com`) |
+| ExternalModel endpoint | `{region}-aiplatform.googleapis.com` (e.g., `us-central1-aiplatform.googleapis.com`) |
 | Auth header | `Authorization: Bearer <OAUTH_TOKEN>` |
-| API path | `/v1/projects/{project}/locations/{location}/endpoints/openapi/chat/completions` |
+| API path | `/v1/projects/{project}/locations/{location}/endpoints/{endpoint}/chat/completions` |
 | Request format | OpenAI Chat Completions (pass-through) |
 | Response format | `usage.extra_properties` stripped; rest is OpenAI-compatible |
-| Plugin config | Required: `project`, `location`, `endpoint` |
+| Plugin config | Required: `project`, `location`, `endpoint` (see below) |
+
+### Plugin Config Fields
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `project` | GCP project ID | `my-gcp-project` |
+| `location` | GCP region | `us-central1` |
+| `endpoint` | Vertex AI endpoint ID — use `openapi` for the OpenAI-compatible endpoint | `openapi` |
 
 ## Response Field Stripping
 
