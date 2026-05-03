@@ -9,7 +9,9 @@ upstreamBbr:
       pullPolicy: IfNotPresent
     port: 9004
     healthCheckPort: 9005
-    multiNamespace: true
+    # false = namespaced Role for secrets + externalmodels (default, least privilege; see #201).
+    # true = ClusterRole when ExternalModels/credentials span multiple namespaces.
+    multiNamespace: false
 
     flags:
       # Log verbosity

@@ -20,11 +20,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/bbr/framework"
 	errcommon "sigs.k8s.io/gateway-api-inference-extension/pkg/common/error"
 	logutil "sigs.k8s.io/gateway-api-inference-extension/pkg/common/observability/logging"
@@ -45,7 +51,7 @@ var _ framework.RequestProcessor = &ApiKeyInjectionPlugin{}
 
 // APIKeyInjectionFactory defines the factory function for ApiKeyInjectionPlugin.
 func APIKeyInjectionFactory(name string, _ json.RawMessage, handle framework.Handle) (framework.BBRPlugin, error) {
-	plugin, err := NewAPIKeyInjectionPlugin(handle.ReconcilerBuilder, handle.ClientReader())
+	plugin, err := NewAPIKeyInjectionPlugin(handle.Context(), handle.ReconcilerBuilder, handle.ClientReader())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create plugin '%s' - %w", APIKeyInjectionPluginType, err)
 	}
@@ -53,15 +59,29 @@ func APIKeyInjectionFactory(name string, _ json.RawMessage, handle framework.Han
 	return plugin.WithName(name), nil
 }
 
-// NewAPIKeyInjectionPlugin creates a new apiKeyInjectionPlugin and returns its pointer
-func NewAPIKeyInjectionPlugin(reconcilerBuilder func() *builder.Builder, clientReader client.Reader) (*ApiKeyInjectionPlugin, error) {
+// NewAPIKeyInjectionPlugin creates a new apiKeyInjectionPlugin and returns its pointer.
+// It sets up a label-filtered informer cache so only Secrets matching the
+// ipp-managed label are listed from the API server; Reconcile still checks the
+// label after Get before updating the store.
+func NewAPIKeyInjectionPlugin(ctx context.Context, reconcilerBuilder func() *builder.Builder, clientReader client.Reader) (*ApiKeyInjectionPlugin, error) {
 	store := newSecretStore()
 	reconciler := &secretReconciler{
 		Reader: clientReader,
 		store:  store,
 	}
 
-	if err := reconcilerBuilder().For(&corev1.Secret{}).WithEventFilter(managedLabelPredicate()).Complete(reconciler); err != nil {
+	filteredCache, err := newFilteredSecretCache(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var secretObj client.Object = &corev1.Secret{}
+	if err := reconcilerBuilder().
+		Named("apikey-injection-secret-watcher").
+		WatchesRawSource(
+			source.Kind(filteredCache, secretObj, &handler.EnqueueRequestForObject{}),
+		).
+		Complete(reconciler); err != nil {
 		return nil, fmt.Errorf("failed to register Secret reconciler for plugin '%s' - %w", APIKeyInjectionPluginType, err)
 	}
 
@@ -71,9 +91,9 @@ func NewAPIKeyInjectionPlugin(reconcilerBuilder func() *builder.Builder, clientR
 			Name: APIKeyInjectionPluginType,
 		},
 		authHeadersGenerators: map[string]auth.AuthHeadersGenerator{
-			provider.OpenAI:        &auth.SimpleAuthGenerator{HeaderName: "Authorization", HeaderValuePrefix: "Bearer "},
-			provider.Anthropic:     &auth.SimpleAuthGenerator{HeaderName: "x-api-key"},
-			provider.AzureOpenAI:   &auth.SimpleAuthGenerator{HeaderName: "api-key"},
+			provider.OpenAI:      &auth.SimpleAuthGenerator{HeaderName: "Authorization", HeaderValuePrefix: "Bearer "},
+			provider.Anthropic:   &auth.SimpleAuthGenerator{HeaderName: "x-api-key"},
+			provider.AzureOpenAI: &auth.SimpleAuthGenerator{HeaderName: "api-key"},
 			// provider.Vertex uses the native GenerateContent API — not used in 3.4 ExternalModel flow.
 			// provider.Vertex:     &auth.SimpleAuthGenerator{HeaderName: "Authorization", HeaderValuePrefix: "Bearer "},
 			provider.VertexOpenAI:  &auth.SimpleAuthGenerator{HeaderName: "Authorization", HeaderValuePrefix: "Bearer "},
@@ -144,4 +164,43 @@ func (p *ApiKeyInjectionPlugin) ProcessRequest(ctx context.Context, cycleState *
 
 	log.FromContext(ctx).V(logutil.VERBOSE).Info("auth headers injected", "provider", providerName)
 	return nil
+}
+
+// newFilteredSecretCache creates a controller-runtime cache that restricts the
+// Secret informer to only list/watch Secrets labeled with the managed label.
+// This is a defense-in-depth measure: even though the RBAC ClusterRole grants
+// broad Secret access (required for cross-namespace watches), the informer
+// never fetches or caches unrelated Secrets.
+func newFilteredSecretCache(ctx context.Context) (cache.Cache, error) {
+	cfg, err := ctrl.GetConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get rest config for filtered Secret cache: %w", err)
+	}
+
+	filteredCache, err := cache.New(cfg, cache.Options{
+		ByObject: map[client.Object]cache.ByObject{
+			&corev1.Secret{}: {
+				Label: labels.SelectorFromSet(labels.Set{
+					managedLabel: "true",
+				}),
+			},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create filtered Secret cache: %w", err)
+	}
+
+	go func() {
+		if err := filteredCache.Start(ctx); err != nil {
+			ctrl.Log.WithName(APIKeyInjectionPluginType).Error(err, "filtered Secret cache stopped unexpectedly")
+		}
+	}()
+
+	syncCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	if !filteredCache.WaitForCacheSync(syncCtx) {
+		return nil, fmt.Errorf("filtered Secret cache failed to sync within deadline")
+	}
+
+	return filteredCache, nil
 }

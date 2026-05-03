@@ -93,7 +93,7 @@ metadata:
   name: vertex-api-key
   namespace: llm
   labels:
-    inference.networking.k8s.io/bbr-managed: "true"
+    inference.llm-d.ai/ipp-managed: "true"
 type: Opaque
 stringData:
   api-key: "ya29.a0..."  # OAuth token from gcloud auth print-access-token

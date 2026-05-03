@@ -1,5 +1,10 @@
 upstreamBbr:
   bbr:
+    # E2E applies ExternalModels and credential Secrets in E2E_NS (default
+    # bbr-e2e) while the chart installs IPP in default. Namespaced Role RBAC
+    # cannot reach another namespace; enable cluster-scoped reader (#201
+    # multiNamespace) so the E2E suite matches production multi-namespace setups.
+    multiNamespace: true
     plugins:
       - type: body-field-to-header
         name: model-extractor

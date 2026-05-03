@@ -6,7 +6,11 @@ kind: ClusterRole
 metadata:
   name: {{ .Release.Name }}-externalmodels-reader
 rules:
-  # apikey-injection plugin: watches labeled Secrets
+  # apikey-injection plugin: watches Secrets that carry the label
+  # "inference.llm-d.ai/ipp-managed=true" to inject provider API keys.
+  # A ClusterRole is required because Kubernetes RBAC does not support
+  # label-based scoping; the apikey-injection Secret informer still applies a
+  # label selector at list/watch time so only ipp-managed Secrets are cached.
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch"]
@@ -35,7 +39,9 @@ metadata:
   name: {{ .Release.Name }}-externalmodels-reader
   namespace: {{ .Release.Namespace }}
 rules:
-  # apikey-injection plugin: watches labeled Secrets
+  # apikey-injection plugin: watches Secrets labeled
+  # "inference.llm-d.ai/ipp-managed=true" in this namespace.
+  # Scoped to a single namespace via Role (preferred over ClusterRole).
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch"]
