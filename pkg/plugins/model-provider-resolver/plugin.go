@@ -96,6 +96,8 @@ func (p *ModelProviderResolverPlugin) WithName(name string) *ModelProviderResolv
 // from the modelInfoStore (populated by ExternalModel reconciler), and writes model, provider
 // and credential reference info to CycleState.
 func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleState *framework.CycleState, request *framework.InferenceRequest) error {
+	logger := log.FromContext(ctx).V(logutil.DEFAULT)
+
 	model, ok := request.Body["model"].(string)
 	if !ok || model == "" {
 		return nil // not an inference request (e.g. API key management, model listing)
@@ -119,12 +121,13 @@ func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleS
 	}
 
 	if !strings.HasSuffix(relativePath, "chat/completions") { // no support for other input types
+		logger.Error(nil, "unsupported route for external model", "model", modelKey.String(), "path", relativePath)
 		return errcommon.Error{Code: errcommon.BadRequest, Msg: "only /chat/completions input type is supported"}
-
 	}
 
 	// if there's a mismatch it's an error, we don't want to proceed
 	if externalModelInfo.targetModel != model {
+		logger.Error(nil, "model mismatch between request body and ExternalModel", "requestModel", model, "externalModel", externalModelInfo.targetModel)
 		return errcommon.Error{Code: errcommon.NotFound, Msg: fmt.Sprintf("model in request body '%s' doesn't match ExternalModel", model)}
 	}
 
@@ -134,6 +137,7 @@ func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleS
 	cycleState.Write(state.CredsRefName, externalModelInfo.secretName)
 	cycleState.Write(state.CredsRefNamespace, externalModelInfo.secretNamespace)
 
+	logger.Info("external model resolved", "model", modelKey.String(), "provider", externalModelInfo.provider)
 	return nil
 }
 

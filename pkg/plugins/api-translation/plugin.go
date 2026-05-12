@@ -136,6 +136,8 @@ func (p *APITranslationPlugin) WithName(name string) *APITranslationPlugin {
 // ProcessRequest reads the provider from CycleState (set by an upstream plugin) and translates
 // the request body from OpenAI format to the provider's native format if needed.
 func (p *APITranslationPlugin) ProcessRequest(ctx context.Context, cycleState *framework.CycleState, request *framework.InferenceRequest) error {
+	logger := log.FromContext(ctx).V(logutil.DEFAULT)
+
 	providerName, err := framework.ReadCycleStateKey[string](cycleState, state.ProviderKey) // err if not found
 	if err != nil || providerName == "" {                                                   // empty provider means no translation needed
 		return nil
@@ -143,11 +145,13 @@ func (p *APITranslationPlugin) ProcessRequest(ctx context.Context, cycleState *f
 
 	translator, ok := p.providers[providerName]
 	if !ok {
+		logger.Error(nil, "unsupported provider for translation", "provider", providerName)
 		return fmt.Errorf("unsupported provider - '%s'", providerName)
 	}
 
 	translatedBody, headersToMutate, headersToRemove, err := translator.TranslateRequest(request.Body)
 	if err != nil {
+		logger.Error(err, "request translation failed", "provider", providerName)
 		var commErr errcommon.Error
 		if errors.As(err, &commErr) {
 			return commErr
@@ -172,12 +176,15 @@ func (p *APITranslationPlugin) ProcessRequest(ctx context.Context, cycleState *f
 
 	// content-length is another special header that will be set automatically by the pluggable framework when the body is mutated.
 
+	logger.Info("request api-translation completed successfully", "provider", providerName)
 	return nil
 }
 
 // ProcessResponse reads the provider from CycleState and translates the response
 // back to OpenAI Chat Completions format if needed.
 func (p *APITranslationPlugin) ProcessResponse(ctx context.Context, cycleState *framework.CycleState, response *framework.InferenceResponse) error {
+	logger := log.FromContext(ctx).V(logutil.DEFAULT)
+
 	providerName, err := framework.ReadCycleStateKey[string](cycleState, state.ProviderKey) // err if not found
 	if err != nil || providerName == "" {                                                   // empty provider means no translation needed
 		return nil
@@ -185,6 +192,7 @@ func (p *APITranslationPlugin) ProcessResponse(ctx context.Context, cycleState *
 
 	translator, ok := p.providers[providerName]
 	if !ok {
+		logger.Error(nil, "unsupported provider for response translation", "provider", providerName)
 		return fmt.Errorf("unsupported provider - '%s'", providerName)
 	}
 
@@ -192,6 +200,7 @@ func (p *APITranslationPlugin) ProcessResponse(ctx context.Context, cycleState *
 
 	translatedBody, err := translator.TranslateResponse(response.Body, model)
 	if err != nil {
+		logger.Error(err, "response translation failed", "provider", providerName)
 		var commErr errcommon.Error
 		if errors.As(err, &commErr) {
 			return commErr
@@ -203,5 +212,6 @@ func (p *APITranslationPlugin) ProcessResponse(ctx context.Context, cycleState *
 		response.SetBody(translatedBody)
 	}
 
+	logger.Info("response api-translation completed successfully", "provider", providerName)
 	return nil
 }

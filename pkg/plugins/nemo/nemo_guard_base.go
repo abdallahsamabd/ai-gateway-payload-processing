@@ -82,38 +82,43 @@ func newNemoGuardBase(nemoURL string, timeoutSeconds int) (*nemoGuardBase, error
 // blocked or NeMo is unreachable. The caller is responsible for constructing the
 // client-facing errcommon.Error from the returned values.
 func (b *nemoGuardBase) callNemoGuard(ctx context.Context, payload []byte) (string, error) {
-	logger := log.FromContext(ctx)
-	logger.V(logutil.VERBOSE).Info("calling NeMo guardrails")
+	logger := log.FromContext(ctx).V(logutil.DEFAULT)
+	log.FromContext(ctx).V(logutil.VERBOSE).Info("calling NeMo guardrails")
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, b.nemoURL, bytes.NewReader(payload))
 	if err != nil {
+		logger.Error(err, "failed to create NeMo request")
 		return errcommon.Internal, fmt.Errorf("failed to create nemo request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := b.httpClient.Do(httpReq)
 	if err != nil {
+		logger.Error(err, "NeMo guardrail call failed")
 		return errcommon.ServiceUnavailable, fmt.Errorf("nemo call failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
+		logger.Error(nil, "NeMo guardrail unexpected status", "statusCode", resp.StatusCode)
 		return errcommon.ServiceUnavailable, fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
 
 	limited := io.LimitReader(resp.Body, maxNemoResponseBytes)
 	body, err := io.ReadAll(limited)
 	if err != nil {
+		logger.Error(err, "failed to read NeMo response")
 		return errcommon.ServiceUnavailable, fmt.Errorf("failed to read nemo response: %w", err)
 	}
 
 	var nemoResp nemoResponse
 	if err := json.Unmarshal(body, &nemoResp); err != nil {
+		logger.Error(err, "failed to decode NeMo response")
 		return errcommon.ServiceUnavailable, fmt.Errorf("failed to decode nemo response: %w", err)
 	}
 
 	if strings.EqualFold(strings.TrimSpace(nemoResp.Status), nemoAllowedStatus) {
-		logger.V(logutil.VERBOSE).Info("allowed by NeMo guardrails")
+		logger.Info("allowed by NeMo guardrails")
 		return "", nil
 	}
 
@@ -123,6 +128,6 @@ func (b *nemoGuardBase) callNemoGuard(ctx context.Context, payload []byte) (stri
 	}
 	railsStatus := fmt.Sprintf("[ %s ]", strings.Join(railsParts, " "))
 
-	logger.Info("blocked by NeMo guardrails", "railsStatus", railsStatus)
+	log.FromContext(ctx).Info("blocked by NeMo guardrails", "railsStatus", railsStatus)
 	return errcommon.Forbidden, fmt.Errorf("blocked by NeMo guardrails")
 }

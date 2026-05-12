@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	logutil "sigs.k8s.io/gateway-api-inference-extension/pkg/common/observability/logging"
 )
 
 const (
@@ -60,7 +61,7 @@ type secretReconciler struct {
 
 // Reconcile handles create/update/delete events for Secrets.
 func (r *secretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
+	logger := log.FromContext(ctx).V(logutil.DEFAULT)
 	key := req.String()
 	logger.Info("reconciling Secret", "key", key)
 
@@ -72,6 +73,7 @@ func (r *secretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	if errors.IsNotFound(err) || !secret.DeletionTimestamp.IsZero() || !hasManagedLabel(secret) {
 		r.store.delete(key)
+		logger.Info("Secret removed from store", "key", key)
 		return ctrl.Result{}, nil
 	}
 
@@ -79,5 +81,6 @@ func (r *secretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, fmt.Errorf("unable to add or update Secret %s: %w", key, err)
 	}
 
+	logger.Info("Secret added/updated in store", "key", key)
 	return ctrl.Result{}, nil
 }
