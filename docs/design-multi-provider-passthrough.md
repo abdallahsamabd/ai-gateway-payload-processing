@@ -76,31 +76,68 @@ type externalModelInfo struct {
 
 ## Architecture
 
-```
-┌──────────────┐     ┌─────────────────────────────────────────────┐     ┌─────────────────┐
-│  Claude Code  │     │                     IPP                     │     │  api.anthropic   │
-│ /v1/messages  │────▶│  model-provider-resolver                    │────▶│    .com          │
-│  (Anthropic)  │     │    detects: incoming=anthropic              │     │  /v1/messages    │
-└──────────────┘     │    reads:   apiFormat=anthropic              │     └─────────────────┘
-                     │    result:  PASSTHROUGH (formats match)      │
-                     │                                              │
-                     │  api-translation                             │
-                     │    sees incoming==apiFormat → skip           │
-                     │                                              │
-                     │  apikey-injection                            │
-                     │    swaps MaaS key → real provider key        │
-                     └─────────────────────────────────────────────┘
+### Passthrough Flow (formats match — no translation)
 
-┌──────────────┐     ┌─────────────────────────────────────────────┐     ┌─────────────────┐
-│  OpenAI SDK   │     │                     IPP                     │     │  api.anthropic   │
-│ /v1/chat/     │────▶│  model-provider-resolver                    │────▶│    .com          │
-│ completions   │     │    detects: incoming=openai                 │     │  /v1/messages    │
-│  (OpenAI)     │     │    reads:   apiFormat=anthropic             │     └─────────────────┘
-└──────────────┘     │    result:  TRANSLATE (formats differ)       │
-                     │                                              │
-                     │  api-translation                             │
-                     │    OpenAI → Anthropic translation (existing) │
-                     └─────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph Client
+        CC["Claude Code\n/v1/messages\n(Anthropic format)"]
+    end
+
+    subgraph IPP["Inference Payload Processor"]
+        MPR["model-provider-resolver\nincoming = anthropic\napiFormat = anthropic\n→ PASSTHROUGH"]
+        AT["api-translation\nformats match → SKIP"]
+        AKI["apikey-injection\nMaaS key → real key"]
+        MPR --> AT --> AKI
+    end
+
+    subgraph Provider["Upstream Provider"]
+        API["api.anthropic.com\n/v1/messages"]
+    end
+
+    CC --> MPR
+    AKI --> API
+```
+
+### Translation Flow (formats differ — translate as before)
+
+```mermaid
+flowchart LR
+    subgraph Client
+        SDK["OpenAI SDK\n/v1/chat/completions\n(OpenAI format)"]
+    end
+
+    subgraph IPP["Inference Payload Processor"]
+        MPR["model-provider-resolver\nincoming = openai\napiFormat = anthropic\n→ TRANSLATE"]
+        AT["api-translation\nOpenAI → Anthropic"]
+        AKI["apikey-injection\nMaaS key → real key"]
+        MPR --> AT --> AKI
+    end
+
+    subgraph Provider["Upstream Provider"]
+        API["api.anthropic.com\n/v1/messages"]
+    end
+
+    SDK --> MPR
+    AKI --> API
+```
+
+### Decision Flow
+
+```mermaid
+flowchart TD
+    A["Request arrives at IPP"] --> B{"Parse request path"}
+    B -->|"/v1/chat/completions"| C["incoming = openai"]
+    B -->|"/v1/messages"| D["incoming = anthropic"]
+    B -->|"/v1/responses"| E["incoming = openai-responses"]
+    B -->|other| F["Reject: unsupported path"]
+
+    C --> G{"incoming == apiFormat?"}
+    D --> G
+    E --> G
+
+    G -->|Yes| H["PASSTHROUGH\nSkip api-translation\nBody flows unchanged"]
+    G -->|No| I["TRANSLATE\napi-translation converts\nrequest and response"]
 ```
 
 ## Changes Required
