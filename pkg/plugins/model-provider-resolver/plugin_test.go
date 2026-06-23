@@ -319,6 +319,124 @@ func TestProcessRequest_UnsupportedPath(t *testing.T) {
 	require.Contains(t, err.Error(), "unsupported API endpoint")
 }
 
+// --- Loop detection tests ---
+
+func TestProcessRequest_ForwardedRequest_Blocked(t *testing.T) {
+	store := newInfoStore()
+	store.addOrUpdateModel("remote-llama",
+		&externalModelInfo{modelName: "remote-llama", refs: []*resolvedProviderRef{{
+			provider: provider.OpenAI, targetModel: "llama-4-scout",
+			apiFormat: apiformat.OpenAIChatCompletions, auth: auth.APIKey,
+			endpoint: "maas.cluster-b.example.com", path: "/maas/v1/chat/completions",
+			secretName: "key", secretNamespace: "llm",
+			config: map[string]string{}, weight: 1,
+		}}},
+	)
+
+	instance := &ModelProviderResolverPlugin{store: store}
+	cs := plugin.NewCycleState()
+	req := requesthandling.NewInferenceRequest()
+	req.Headers[":path"] = "/llm/remote-llama/v1/chat/completions"
+	req.Headers[ForwardedHeader] = ForwardedHeaderValue
+	req.Body["model"] = "remote-llama"
+
+	err := instance.ProcessRequest(context.Background(), cs, req)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "routing loop detected")
+}
+
+func TestProcessRequest_ForwardedRequest_BeforeCycleStateWrite(t *testing.T) {
+	store := newInfoStore()
+	store.addOrUpdateModel("remote-llama",
+		&externalModelInfo{modelName: "remote-llama", refs: []*resolvedProviderRef{{
+			provider: provider.OpenAI, targetModel: "llama-4-scout",
+			apiFormat: apiformat.OpenAIChatCompletions, auth: auth.APIKey,
+			endpoint: "maas.cluster-b.example.com", path: "/maas/v1/chat/completions",
+			secretName: "key", secretNamespace: "llm",
+			config: map[string]string{}, weight: 1,
+		}}},
+	)
+
+	instance := &ModelProviderResolverPlugin{store: store}
+	cs := plugin.NewCycleState()
+	req := requesthandling.NewInferenceRequest()
+	req.Headers[":path"] = "/llm/remote-llama/v1/chat/completions"
+	req.Headers[ForwardedHeader] = ForwardedHeaderValue
+	req.Body["model"] = "remote-llama"
+
+	err := instance.ProcessRequest(context.Background(), cs, req)
+	require.Error(t, err)
+
+	_, csErr := plugin.ReadCycleStateKey[string](cs, state.ProviderKey)
+	require.Error(t, csErr, "CycleState should be empty — loop rejected before CycleState writes")
+}
+
+func TestProcessRequest_ForwardedRequest_InternalModel_PassesThrough(t *testing.T) {
+	store := newInfoStore()
+
+	instance := &ModelProviderResolverPlugin{store: store}
+	cs := plugin.NewCycleState()
+	req := requesthandling.NewInferenceRequest()
+	req.Headers[":path"] = "/llm/local-model/v1/chat/completions"
+	req.Headers[ForwardedHeader] = ForwardedHeaderValue
+	req.Body["model"] = "local-model"
+
+	err := instance.ProcessRequest(context.Background(), cs, req)
+	require.NoError(t, err, "forwarded request to an internal model (not in ExternalModel store) should pass through")
+}
+
+func TestProcessRequest_NoForwardedHeader_Passes(t *testing.T) {
+	store := newInfoStore()
+	store.addOrUpdateModel("gpt4",
+		&externalModelInfo{modelName: "gpt4", refs: []*resolvedProviderRef{{
+			provider: provider.OpenAI, targetModel: "gpt-4o",
+			apiFormat: apiformat.OpenAIChatCompletions, auth: auth.APIKey,
+			endpoint: "api.openai.com",
+			secretName: "key", secretNamespace: "llm",
+			config: map[string]string{}, weight: 1,
+		}}},
+	)
+
+	instance := &ModelProviderResolverPlugin{store: store}
+	cs := plugin.NewCycleState()
+	req := requesthandling.NewInferenceRequest()
+	req.Headers[":path"] = "/llm/gpt4/v1/chat/completions"
+	req.Body["model"] = "gpt4"
+
+	err := instance.ProcessRequest(context.Background(), cs, req)
+	require.NoError(t, err, "request without forwarded header should pass")
+
+	actualProvider, err := plugin.ReadCycleStateKey[string](cs, state.ProviderKey)
+	require.NoError(t, err)
+	require.Equal(t, provider.OpenAI, actualProvider)
+}
+
+func TestProcessRequest_ExternalModel_InjectsForwardedHeader(t *testing.T) {
+	store := newInfoStore()
+	store.addOrUpdateModel("gpt4",
+		&externalModelInfo{modelName: "gpt4", refs: []*resolvedProviderRef{{
+			provider: provider.OpenAI, targetModel: "gpt-4o",
+			apiFormat: apiformat.OpenAIChatCompletions, auth: auth.APIKey,
+			endpoint: "api.openai.com",
+			secretName: "key", secretNamespace: "llm",
+			config: map[string]string{}, weight: 1,
+		}}},
+	)
+
+	instance := &ModelProviderResolverPlugin{store: store}
+	cs := plugin.NewCycleState()
+	req := requesthandling.NewInferenceRequest()
+	req.Headers[":path"] = "/llm/gpt4/v1/chat/completions"
+	req.Body["model"] = "gpt4"
+
+	err := instance.ProcessRequest(context.Background(), cs, req)
+	require.NoError(t, err)
+
+	mutated := req.MutatedHeaders()
+	require.Equal(t, ForwardedHeaderValue, mutated[ForwardedHeader],
+		"ExternalModel resolution should inject x-gateway-forwarded header")
+}
+
 func TestDetectInputAPIFormat(t *testing.T) {
 	tests := []struct {
 		path     string

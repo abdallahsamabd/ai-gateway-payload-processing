@@ -42,18 +42,26 @@ import (
 
 const (
 	ModelProviderResolverPluginType = "model-provider-resolver"
+
+	// ForwardedHeader is set to "true" when the payload processor forwards a
+	// request to an ExternalModel. If a subsequent payload processor sees this
+	// header on an incoming request that also resolves to an ExternalModel,
+	// the request is rejected — it has already been forwarded once and must
+	// not be forwarded again.
+	ForwardedHeader      = "x-gateway-forwarded"
+	ForwardedHeaderValue = "true"
 )
 
 var _ requesthandling.RequestProcessor = &ModelProviderResolverPlugin{}
 
 // ModelProviderResolverFactory defines the factory function for ModelProviderResolverPlugin.
 func ModelProviderResolverFactory(name string, _ json.RawMessage, handle plugin.Handle) (plugin.Plugin, error) {
-	plugin, err := NewModelProviderResolver(handle.ReconcilerBuilder, handle.Client())
+	p, err := NewModelProviderResolver(handle.ReconcilerBuilder, handle.Client())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create plugin '%s' - %w", ModelProviderResolverPluginType, err)
 	}
 
-	return plugin.WithName(name), nil
+	return p.WithName(name), nil
 }
 
 // NewModelProviderResolver registers store reconcilers for inference.opendatahub.io
@@ -108,6 +116,12 @@ func NewModelProviderResolver(reconcilerBuilder func() *builder.Builder, k8sClie
 // ModelProviderResolverPlugin resolves model names to provider info by watching ExternalModel CRDs.
 // It writes the model, provider and credential reference to CycleState for downstream plugins
 // (api-translation, api-key-injection).
+//
+// The plugin performs routing loop detection: if an incoming request carries the
+// X-Gateway-Forwarded header (meaning it was already forwarded by another payload
+// processor) and it resolves to an ExternalModel here, the request is rejected — it
+// has already been forwarded once and must not be forwarded again. On the first
+// ExternalModel resolution, the header is injected.
 type ModelProviderResolverPlugin struct {
 	typedName plugin.TypedName
 	store     *infoStore
@@ -125,6 +139,11 @@ func (p *ModelProviderResolverPlugin) WithName(name string) *ModelProviderResolv
 // ProcessRequest reads the model name from the request body, resolves the provider
 // from the store (populated by ExternalModel reconciler), and writes model, provider
 // and credential reference info to CycleState.
+//
+// The method also performs routing loop detection:
+//   - Rejects requests that already carry X-Gateway-Forwarded and resolve to an
+//     ExternalModel (a request may only be forwarded once).
+//   - Injects X-Gateway-Forwarded on the first ExternalModel resolution.
 func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleState *plugin.CycleState, request *requesthandling.InferenceRequest) error {
 	logger := log.FromContext(ctx).V(logutil.DEFAULT)
 
@@ -158,6 +177,10 @@ func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleS
 
 	ref := selectByWeight(modelInfo.refs)
 
+	if err := checkRoutingLoop(ctx, request); err != nil {
+		return err
+	}
+
 	cycleState.Write(state.ProviderKey, ref.provider)
 	cycleState.Write(state.ModelKey, ref.targetModel)
 	cycleState.Write(state.APIFormatKey, ref.apiFormat)
@@ -169,8 +192,36 @@ func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleS
 	cycleState.Write(state.ModelConfigKey, ref.config)
 	cycleState.Write(state.InputAPIFormatKey, inputFormat)
 
+	markForwarded(ctx, request)
+
 	logger.Info("external model resolved", "model", modelName, "provider", ref.provider, "inputFormat", inputFormat, "apiFormat", ref.apiFormat)
 	return nil
+}
+
+// checkRoutingLoop rejects a request that has already been forwarded
+// (X-Gateway-Forwarded header present) and would be forwarded again
+// (resolves to an ExternalModel here). A request may only be forwarded once;
+// there is no legitimate use-case for multi-hop cross-cluster routing.
+func checkRoutingLoop(ctx context.Context, request *requesthandling.InferenceRequest) error {
+	if request.Headers[ForwardedHeader] != ForwardedHeaderValue {
+		return nil
+	}
+
+	log.FromContext(ctx).V(logutil.DEFAULT).Error(nil,
+		"routing loop detected: request already forwarded, cannot forward again")
+	return errcommon.Error{
+		Code: errcommon.Forbidden,
+		Msg:  "routing loop detected: request already forwarded, cannot forward again",
+	}
+}
+
+// markForwarded sets the X-Gateway-Forwarded header on outgoing requests
+// resolved through an ExternalModel. This allows a receiving payload processor
+// to detect that the request has already been forwarded.
+func markForwarded(ctx context.Context, request *requesthandling.InferenceRequest) {
+	request.SetHeader(ForwardedHeader, ForwardedHeaderValue)
+	log.FromContext(ctx).V(logutil.VERBOSE).Info("marked request as forwarded",
+		"header", ForwardedHeader)
 }
 
 // detectInputAPIFormat determines the client's API format from the request path suffix.
