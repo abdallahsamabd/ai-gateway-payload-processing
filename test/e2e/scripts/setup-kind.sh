@@ -121,7 +121,7 @@ EOF
 deploy_bbr() {
     echo "Deploying BBR via Helm chart..."
 
-    local image_tag="quay.io/opendatahub/odh-ai-gateway-payload-processing:odh-stable"
+    local image_tag="quay.io/opendatahub/odh-ai-gateway-payload-processing:latest"
 
     # Always build from source to ensure E2E tests run against the current code.
     # The quay.io image may not include changes from the PR being tested.

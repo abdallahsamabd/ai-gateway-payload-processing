@@ -22,7 +22,7 @@ spec:
   - name: revision
     value: '{{revision}}'
   - name: output-image
-    value: quay.io/opendatahub/ai-gateway-payload-processing-e2e:odh-stable
+    value: quay.io/opendatahub/ai-gateway-payload-processing-e2e:latest
   - name: dockerfile
     value: Dockerfile.e2e
   - name: path-context
