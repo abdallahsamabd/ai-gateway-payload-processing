@@ -90,7 +90,7 @@ func TestModelReconciler_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	info, found := store.getModel(key)
+	info, found := store.getModelByName(key.Name)
 	require.True(t, found)
 	assert.Equal(t, "gpt4", info.modelName, "modelName defaults to metadata.name")
 	require.Len(t, info.refs, 1)
@@ -125,9 +125,13 @@ func TestModelReconciler_ModelNameOverride(t *testing.T) {
 	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key})
 	require.NoError(t, err)
 
-	info, found := store.getModel(key)
+	info, found := store.getModelByName("gpt-4o")
 	require.True(t, found)
 	assert.Equal(t, "gpt-4o", info.modelName, "spec.modelName should override metadata.name")
+
+	// Should NOT be findable by the CRD name
+	_, foundByOldName := store.getModelByName(key.Name)
+	assert.False(t, foundByOldName, "should not be findable by CRD name when modelName is set")
 }
 
 func TestModelReconciler_DeletedCR(t *testing.T) {
@@ -135,7 +139,7 @@ func TestModelReconciler_DeletedCR(t *testing.T) {
 	reader := &mockModelReader{objects: map[types.NamespacedName]*inferencev1alpha1.ExternalModel{}}
 
 	store := newInfoStore()
-	store.addOrUpdateModel(key, &externalModelInfo{refs: []*resolvedProviderRef{
+	store.addOrUpdateModel(key.Name, &externalModelInfo{modelName: key.Name, refs: []*resolvedProviderRef{
 		{provider: "openai", targetModel: "gpt-4o", weight: 1},
 	}})
 
@@ -144,7 +148,7 @@ func TestModelReconciler_DeletedCR(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	_, found := store.getModel(key)
+	_, found := store.getModelByName(key.Name)
 	assert.False(t, found, "store entry should be removed on delete")
 }
 
@@ -161,7 +165,7 @@ func TestModelReconciler_ProviderNotAvailable(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, providerRequeueDelay, result.RequeueAfter)
 
-	_, found := store.getModel(key)
+	_, found := store.getModelByName(key.Name)
 	assert.False(t, found)
 }
 
@@ -191,7 +195,7 @@ func TestModelReconciler_MultiRefAllResolved(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	info, found := store.getModel(key)
+	info, found := store.getModelByName(key.Name)
 	require.True(t, found)
 	require.Len(t, info.refs, 2, "both refs should be resolved")
 	assert.Equal(t, "openai", info.refs[0].provider)
@@ -219,7 +223,7 @@ func TestModelReconciler_MultiRefPartialAvailability(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	info, found := store.getModel(key)
+	info, found := store.getModelByName(key.Name)
 	require.True(t, found)
 	require.Len(t, info.refs, 1, "only the available ref should be stored")
 	assert.Equal(t, "anthropic", info.refs[0].provider)
@@ -249,7 +253,7 @@ func TestModelReconciler_AuthOverride(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	info, found := store.getModel(key)
+	info, found := store.getModelByName(key.Name)
 	require.True(t, found)
 	assert.Equal(t, auth.APIKey, info.refs[0].auth, "model-level auth overrides provider-level auth")
 	assert.Equal(t, "model-specific-key", info.refs[0].secretName)
@@ -284,7 +288,7 @@ func TestModelReconciler_WeightFromCRD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 
-	info, found := store.getModel(key)
+	info, found := store.getModelByName(key.Name)
 	require.True(t, found)
 	require.Len(t, info.refs, 2)
 	assert.Equal(t, 80, info.refs[0].weight)
@@ -308,7 +312,7 @@ func TestModelReconciler_WeightDefaultsToOne(t *testing.T) {
 	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key})
 	require.NoError(t, err)
 
-	info, found := store.getModel(key)
+	info, found := store.getModelByName(key.Name)
 	require.True(t, found)
 	assert.Equal(t, 1, info.refs[0].weight, "weight should default to 1")
 }
@@ -334,7 +338,7 @@ func TestModelReconciler_ConfigMerge(t *testing.T) {
 	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key})
 	require.NoError(t, err)
 
-	info, found := store.getModel(key)
+	info, found := store.getModelByName(key.Name)
 	require.True(t, found)
 	assert.Equal(t, "my-project", info.refs[0].config["project"])
 	assert.Equal(t, "us-central1", info.refs[0].config["location"])
@@ -362,7 +366,7 @@ func TestModelReconciler_PathStoredFromRef(t *testing.T) {
 	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key})
 	require.NoError(t, err)
 
-	info, found := store.getModel(key)
+	info, found := store.getModelByName(key.Name)
 	require.True(t, found)
 	assert.Equal(t, "/maas-default-gateway/v1/chat/completions", info.refs[0].path,
 		"resolved path should come from the model ref's required path field")
@@ -389,7 +393,7 @@ func TestModelReconciler_PathPlaceholderResolution(t *testing.T) {
 	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key})
 	require.NoError(t, err)
 
-	info, found := store.getModel(key)
+	info, found := store.getModelByName(key.Name)
 	require.True(t, found)
 	assert.Equal(t, "/v1/my-project/us-central1/publishers/google/models/{model}:generateContent",
 		info.refs[0].path,

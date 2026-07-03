@@ -66,9 +66,19 @@ func (r *externalModelReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if errors.IsNotFound(err) || !model.GetDeletionTimestamp().IsZero() {
-		r.store.deleteModel(req.NamespacedName)
+		// On deletion, use the CRD name as fallback since spec may be empty.
+		deleteName := model.Spec.ModelName
+		if deleteName == "" {
+			deleteName = req.Name
+		}
+		r.store.deleteModel(deleteName)
 		logger.Info("ExternalModel removed from store", "name", req.Name, "namespace", req.Namespace)
 		return ctrl.Result{}, nil
+	}
+
+	modelName := model.Spec.ModelName
+	if modelName == "" {
+		modelName = req.Name
 	}
 
 	// Resolve all refs whose providers are available in the store.
@@ -87,12 +97,7 @@ func (r *externalModelReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: providerRequeueDelay}, nil
 	}
 
-	modelName := model.Spec.ModelName
-	if modelName == "" {
-		modelName = req.Name
-	}
-
-	r.store.addOrUpdateModel(req.NamespacedName, &externalModelInfo{modelName: modelName, refs: resolved})
+	r.store.addOrUpdateModel(modelName, &externalModelInfo{modelName: modelName, refs: resolved})
 	logger.Info("updated model store", "modelName", modelName, "resolvedRefs", len(resolved))
 	return ctrl.Result{}, nil
 }
