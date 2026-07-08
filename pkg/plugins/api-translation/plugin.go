@@ -64,6 +64,7 @@ func NewAPITranslationPlugin(ctx context.Context) *APITranslationPlugin {
 		{apiformat.OpenAIChatCompletions, apiformat.OpenAIChatCompletions}: openai.NewOpenAITranslator(),
 		{apiformat.OpenAIChatCompletions, apiformat.Messages}:             anthropic.NewAnthropicTranslator(),
 		{apiformat.OpenAIChatCompletions, apiformat.VertexMessages}:       vertex.NewVertexAnthropicTranslator(),
+		{apiformat.Messages, apiformat.VertexMessages}:                    vertex.NewVertexAnthropicPassthroughTranslator(),
 	}
 
 	log.FromContext(ctx).V(logutil.VERBOSE).Info("plugin initialized", "translators", len(translators))

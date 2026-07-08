@@ -84,3 +84,35 @@ func (t *VertexAnthropicTranslator) TranslateRequestWithConfig(body map[string]a
 func (t *VertexAnthropicTranslator) TranslateResponse(body map[string]any, model string) (map[string]any, error) {
 	return t.anthropic.TranslateResponse(body, model)
 }
+
+// VertexAnthropicPassthroughTranslator handles native Anthropic Messages API clients
+// (e.g., Claude Code) targeting Vertex AI Claude. The body is already in Anthropic
+// format so no conversion is needed — just inject anthropic_version and remove model.
+type VertexAnthropicPassthroughTranslator struct{}
+
+var _ translator.Translator = &VertexAnthropicPassthroughTranslator{}
+var _ translator.ConfigAwareTranslator = &VertexAnthropicPassthroughTranslator{}
+
+func NewVertexAnthropicPassthroughTranslator() *VertexAnthropicPassthroughTranslator {
+	return &VertexAnthropicPassthroughTranslator{}
+}
+
+func (t *VertexAnthropicPassthroughTranslator) TranslateRequest(body map[string]any) (map[string]any, map[string]string, []string, error) {
+	return nil, nil, nil, fmt.Errorf("vertex-anthropic-passthrough requires config; use TranslateRequestWithConfig")
+}
+
+func (t *VertexAnthropicPassthroughTranslator) TranslateRequestWithConfig(body map[string]any, config map[string]string) (map[string]any, map[string]string, []string, error) {
+	anthropicVersion := config[AnthropicVersionConfigKey]
+	if anthropicVersion == "" {
+		return nil, nil, nil, fmt.Errorf("%s is required in ExternalModel/Provider config for vertex-anthropic", AnthropicVersionConfigKey)
+	}
+	body["anthropic_version"] = anthropicVersion
+	delete(body, "model")
+
+	headers := map[string]string{"content-type": "application/json"}
+	return body, headers, nil, nil
+}
+
+func (t *VertexAnthropicPassthroughTranslator) TranslateResponse(body map[string]any, _ string) (map[string]any, error) {
+	return nil, nil
+}
