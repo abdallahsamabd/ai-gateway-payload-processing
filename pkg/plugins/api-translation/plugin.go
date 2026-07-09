@@ -28,9 +28,10 @@ import (
 	logutil "github.com/llm-d/llm-d-inference-payload-processor/pkg/common/observability/logging"
 	"github.com/llm-d/llm-d-inference-payload-processor/pkg/framework/interface/plugin"
 
-	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator"
+	translatorpkg "github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator"
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator/anthropic"
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator/openai"
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/api-translation/translator/vertex"
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/common/apiformat"
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/common/state"
 )
@@ -59,9 +60,11 @@ type translatorKey struct {
 // Provider-specific configuration (e.g., Vertex AI project/location/endpoint) is read
 // from ExternalProvider CRD config and path placeholders at runtime, not from plugin config.
 func NewAPITranslationPlugin(ctx context.Context) *APITranslationPlugin {
-	translators := map[translatorKey]translator.Translator{
+	translators := map[translatorKey]translatorpkg.Translator{
 		{apiformat.OpenAIChatCompletions, apiformat.OpenAIChatCompletions}: openai.NewOpenAITranslator(),
 		{apiformat.OpenAIChatCompletions, apiformat.Messages}:             anthropic.NewAnthropicTranslator(),
+		{apiformat.OpenAIChatCompletions, apiformat.VertexMessages}:       vertex.NewVertexAnthropicTranslator(),
+		{apiformat.Messages, apiformat.VertexMessages}:                    vertex.NewVertexAnthropicPassthroughTranslator(),
 	}
 
 	log.FromContext(ctx).V(logutil.VERBOSE).Info("plugin initialized", "translators", len(translators))
@@ -79,7 +82,7 @@ func NewAPITranslationPlugin(ctx context.Context) *APITranslationPlugin {
 // API formats based on the (inputFormat, outputFormat) tuple from CycleState.
 type APITranslationPlugin struct {
 	typedName   plugin.TypedName
-	translators map[translatorKey]translator.Translator
+	translators map[translatorKey]translatorpkg.Translator
 }
 
 // TypedName returns the type and name tuple of this plugin instance.
@@ -101,7 +104,7 @@ func applyPathOverride(cycleState *plugin.CycleState, request *requesthandling.I
 	}
 }
 
-// ProcessRequest reads the provider from CycleState (set by an upstream plugin) and translates
+// ProcessRequest reads the format info from CycleState (set by an upstream plugin) and translates
 // the request body from OpenAI format to the provider's native format if needed.
 // When the incoming client format matches the upstream API format (passthrough mode),
 // translation is skipped entirely.
@@ -128,7 +131,17 @@ func (p *APITranslationPlugin) ProcessRequest(ctx context.Context, cycleState *p
 		return fmt.Errorf("unsupported format combination: %s → %s", inputFormat, outputFormat)
 	}
 
-	translatedBody, headersToMutate, headersToRemove, err := translator.TranslateRequest(request.Body)
+	var translatedBody map[string]any
+	var headersToMutate map[string]string
+	var headersToRemove []string
+	var err error
+
+	if cat, ok := translator.(translatorpkg.ConfigAwareTranslator); ok {
+		modelConfig, _ := plugin.ReadCycleStateKey[map[string]string](cycleState, state.ModelConfigKey)
+		translatedBody, headersToMutate, headersToRemove, err = cat.TranslateRequestWithConfig(request.Body, modelConfig)
+	} else {
+		translatedBody, headersToMutate, headersToRemove, err = translator.TranslateRequest(request.Body)
+	}
 	if err != nil {
 		logger.Error(err, "request translation failed", "input", inputFormat, "output", outputFormat)
 		var commErr errcommon.Error
