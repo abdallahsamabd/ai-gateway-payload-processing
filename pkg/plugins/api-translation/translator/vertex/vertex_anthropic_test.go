@@ -63,7 +63,7 @@ func TestVertexAnthropic_TranslateRequest_BasicChat(t *testing.T) {
 	_, hasAnthropicVersionHeader := headers["anthropic-version"]
 	assert.False(t, hasAnthropicVersionHeader, "Vertex does not use anthropic-version header")
 
-	assert.Empty(t, headersToRemove)
+	assert.Equal(t, []string{"anthropic-beta"}, headersToRemove, "Vertex rejects unknown anthropic-beta flags, header must be stripped")
 }
 
 func TestVertexAnthropic_TranslateRequest_SystemMessage(t *testing.T) {

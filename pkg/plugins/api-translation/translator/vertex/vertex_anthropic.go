@@ -27,7 +27,29 @@ const (
 	// AnthropicVersionConfigKey is the key in the ExternalModel/Provider config map
 	// that carries the Anthropic API version for Vertex AI Claude requests.
 	AnthropicVersionConfigKey = "anthropicVersion"
+
+	// anthropicBetaHeader carries client-requested Anthropic beta features.
+	// Vertex AI rejects the whole request (400) when the header contains any
+	// beta flag it does not recognize, so vertex translators strip the header.
+	anthropicBetaHeader = "anthropic-beta"
 )
+
+// vertexUnsupportedBodyFields are Anthropic Messages API request fields that Vertex AI's
+// Claude endpoint rejects with 400 "Extra inputs are not permitted". Clients such as
+// Claude Code send them; the corresponding features degrade gracefully when dropped.
+var vertexUnsupportedBodyFields = []string{
+	"context_management",
+	"betas",
+	"mcp_servers",
+	"service_tier",
+	"container",
+}
+
+func stripVertexUnsupportedFields(body map[string]any) {
+	for _, f := range vertexUnsupportedBodyFields {
+		delete(body, f)
+	}
+}
 
 // compile-time interface checks
 var _ translator.Translator = &VertexAnthropicTranslator{}
@@ -71,12 +93,13 @@ func (t *VertexAnthropicTranslator) TranslateRequestWithConfig(body map[string]a
 		return nil, nil, nil, fmt.Errorf("%s is required in ExternalModel/Provider config for vertex-anthropic", AnthropicVersionConfigKey)
 	}
 	translatedBody["anthropic_version"] = anthropicVersion
+	stripVertexUnsupportedFields(translatedBody)
 
 	headers := map[string]string{
 		"content-type": "application/json",
 	}
 
-	return translatedBody, headers, headersToRemove, nil
+	return translatedBody, headers, append(headersToRemove, anthropicBetaHeader), nil
 }
 
 // TranslateResponse delegates to AnthropicTranslator since Vertex returns the same
@@ -108,9 +131,10 @@ func (t *VertexAnthropicPassthroughTranslator) TranslateRequestWithConfig(body m
 	}
 	body["anthropic_version"] = anthropicVersion
 	delete(body, "model")
+	stripVertexUnsupportedFields(body)
 
 	headers := map[string]string{"content-type": "application/json"}
-	return body, headers, nil, nil
+	return body, headers, []string{anthropicBetaHeader}, nil
 }
 
 func (t *VertexAnthropicPassthroughTranslator) TranslateResponse(body map[string]any, _ string) (map[string]any, error) {

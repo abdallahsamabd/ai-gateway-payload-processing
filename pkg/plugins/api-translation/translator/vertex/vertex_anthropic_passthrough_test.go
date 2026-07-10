@@ -68,7 +68,7 @@ func TestVertexAnthropicPassthrough_TranslateRequestWithConfig_BasicChat(t *test
 	assert.False(t, hasPath, "path is set by applyPathOverride, not by the translator")
 	_, hasAnthropicVersionHeader := headers["anthropic-version"]
 	assert.False(t, hasAnthropicVersionHeader, "Vertex does not use the anthropic-version header")
-	assert.Empty(t, headersToRemove)
+	assert.Equal(t, []string{"anthropic-beta"}, headersToRemove, "Vertex rejects unknown anthropic-beta flags, header must be stripped")
 }
 
 func TestVertexAnthropicPassthrough_TranslateRequestWithConfig_PreservesRichFields(t *testing.T) {
@@ -170,4 +170,19 @@ func TestVertexAnthropicPassthrough_TranslateResponse_Passthrough(t *testing.T) 
 	}, "claude-opus-4-8")
 	require.NoError(t, err)
 	assert.Nil(t, translated, "response must pass through unmodified")
+}
+
+func TestVertexAnthropicPassthrough_StripsVertexUnsupportedFields(t *testing.T) {
+	tr := NewVertexAnthropicPassthroughTranslator()
+	body := nativeMessagesBody()
+	body["context_management"] = map[string]any{"edits": []any{map[string]any{"type": "clear_tool_uses_20250919"}}}
+	body["mcp_servers"] = []any{map[string]any{"type": "url", "url": "https://example.com"}}
+	body["service_tier"] = "auto"
+
+	translated, _, _, err := tr.TranslateRequestWithConfig(body, testConfig())
+	require.NoError(t, err)
+	for _, f := range vertexUnsupportedBodyFields {
+		assert.NotContains(t, translated, f, "Vertex rejects %q with 400 Extra inputs are not permitted", f)
+	}
+	assert.Contains(t, translated, "messages")
 }
