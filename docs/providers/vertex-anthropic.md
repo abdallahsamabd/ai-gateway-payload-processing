@@ -15,7 +15,7 @@ adjustments are applied.
 
 | Field | Value |
 |-------|-------|
-| Provider type | `vertex-anthropic` |
+| Provider type | freeform (e.g. `vertex-anthropic`) — used for logging only, not validated |
 | Endpoint | `us-central1-aiplatform.googleapis.com` (or your region) |
 | Auth | OAuth2 — GCP service account JSON → Bearer token |
 | `apiFormat` | `vertex-messages` |

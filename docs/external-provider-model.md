@@ -1,7 +1,7 @@
 # ExternalProvider and ExternalModel CRDs
 
 This document describes the two-resource CRD architecture introduced for multi-provider
-external model serving (RHAISTRAT-1720).
+external model serving.
 
 ## Overview
 
@@ -30,7 +30,8 @@ metadata:
   name: my-anthropic
   namespace: llm
 spec:
-  provider: anthropic          # freeform label, used for logging and header defaults
+  provider: anthropic          # freeform label — no enum validation, used for logging
+                               # and auth header defaults (e.g. anthropic → x-api-key)
   endpoint: api.anthropic.com  # must be a DNS hostname, not a bare IP
   auth:
     type: apikey               # apikey | sigv4 | oauth2 | none
@@ -87,7 +88,7 @@ metadata:
   name: claude
   namespace: llm
 spec:
-  modelName: claude-sonnet    # optional — defaults to metadata.name
+  # modelName: claude-sonnet  # coming in a future release — defaults to metadata.name
                               # use when the desired name isn't a valid k8s name
   externalProviderRefs:
     - ref:
@@ -100,17 +101,12 @@ spec:
       auth: {}                # optional, overrides provider auth for this binding
 ```
 
-### `spec.modelName`
+### `spec.modelName` (upcoming)
 
-Use `spec.modelName` when the client-facing model name contains characters not allowed in
-Kubernetes resource names (dots, uppercase letters, colons, slashes). For example:
-
-```yaml
-metadata:
-  name: gpt4o-model           # k8s-valid name
-spec:
-  modelName: gpt-4o           # what clients send in the "model" field
-```
+A future release will add `spec.modelName` to decouple the client-facing model name from
+`metadata.name`. This is useful when the desired name contains characters not allowed in
+Kubernetes resource names (dots, uppercase letters, colons, slashes). Until then, clients
+use `metadata.name` as the model name.
 
 ### `apiFormat`
 
@@ -163,7 +159,7 @@ policies without assuming naming conventions.
 
 ## How the gateway processes a request
 
-1. Client sends `POST /{namespace}/{modelName}/v1/chat/completions` with `"model": "claude-sonnet"`
+1. Client sends a chat completions request with `"model": "claude-sonnet"` — either via the path-routed URL (`/{namespace}/{modelName}/v1/chat/completions`) or body-routed (`/v1/chat/completions` with model in the request body, which is the default for ExternalModel routing)
 2. `body-field-to-header` extracts model name → `X-Gateway-Model-Name: claude-sonnet`
 3. `model-provider-resolver` looks up `claude-sonnet` → resolves ExternalProvider, selects
    a provider ref (weighted random if multiple), writes provider info to CycleState
