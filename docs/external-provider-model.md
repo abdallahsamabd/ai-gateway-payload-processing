@@ -37,7 +37,7 @@ spec:
     secretRef:
       name: anthropic-key      # K8s Secret in the same namespace
   config:                      # optional key-value pairs for path placeholders
-    key: value
+    # example: project: my-gcp-project
 ```
 
 ### Auth types
@@ -70,7 +70,7 @@ stringData:
 ### Status
 
 ```bash
-kubectl get externalprovider my-anthropic -n llm -o jsonpath='{.status.phase}'
+kubectl get externalproviders my-anthropic -n llm -o jsonpath='{.status.phase}'
 # Ready | Failed | Pending
 ```
 
@@ -163,7 +163,7 @@ policies without assuming naming conventions.
 
 ## How the gateway processes a request
 
-1. Client sends `POST /v1/chat/completions` with `"model": "claude-sonnet"`
+1. Client sends `POST /{namespace}/{modelName}/v1/chat/completions` with `"model": "claude-sonnet"`
 2. `body-field-to-header` extracts model name → `X-Gateway-Model-Name: claude-sonnet`
 3. `model-provider-resolver` looks up `claude-sonnet` → resolves ExternalProvider, selects
    a provider ref (weighted random if multiple), writes provider info to CycleState
