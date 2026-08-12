@@ -79,6 +79,11 @@ func NewAPIKeyInjectionPlugin(ctx context.Context, reconcilerBuilder func() *bui
 		return nil, err
 	}
 
+	if err := seedStoreFromCache(cacheCtx, filteredCache, store); err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to seed credential store from existing Secrets: %w", err)
+	}
+
 	var secretObj client.Object = &corev1.Secret{}
 	if err := reconcilerBuilder().
 		Named("apikey-injection-secret-watcher").
@@ -103,6 +108,29 @@ func NewAPIKeyInjectionPlugin(ctx context.Context, reconcilerBuilder func() *bui
 		store:     store,
 		cancelCtx: cancel,
 	}), nil
+}
+
+// seedStoreFromCache lists all Secrets already in the filtered cache and
+// populates the credential store. This compensates for controller-runtime
+// v0.23.3 not delivering synthetic Add events for pre-existing objects when
+// using source.Kind with a standalone cache.
+func seedStoreFromCache(ctx context.Context, c cache.Cache, store *secretStore) error {
+	secretList := &corev1.SecretList{}
+	if err := c.List(ctx, secretList, client.MatchingLabels{managedLabel: "true"}); err != nil {
+		return err
+	}
+	logger := ctrl.Log.WithName(APIKeyInjectionPluginType)
+	for i := range secretList.Items {
+		secret := &secretList.Items[i]
+		if err := store.addOrUpdate(secret.Namespace, secret.Name, secret); err != nil {
+			logger.Error(err, "skipping Secret during store seeding",
+				"namespace", secret.Namespace, "name", secret.Name)
+			continue
+		}
+		logger.Info("seeded credential store from existing Secret",
+			"namespace", secret.Namespace, "name", secret.Name)
+	}
+	return nil
 }
 
 // ApiKeyInjectionPlugin injects an API key from a Kubernetes Secret into the request headers.
