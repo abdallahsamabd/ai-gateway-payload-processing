@@ -45,12 +45,17 @@ func TestPick(t *testing.T) {
 		wantProfile  string
 	}{
 		{
-			name:        "no format keys (internal model)",
-			wantProfile: "passthrough",
+			name:        "no format keys (resolver did not run) — fail safe to translation",
+			wantProfile: "translation",
 		},
 		{
 			name:         "input only, no output (internal model)",
 			inputFormat:  apiformat.OpenAIChatCompletions,
+			wantProfile:  "passthrough",
+		},
+		{
+			name:         "input only, non-openai (internal model)",
+			inputFormat:  apiformat.Messages,
 			wantProfile:  "passthrough",
 		},
 		{
@@ -115,6 +120,8 @@ func TestPick_MissingProfile(t *testing.T) {
 	}
 
 	cs := plugin.NewCycleState()
+	cs.Write(state.InputAPIFormatKey, apiformat.Messages)
+	cs.Write(state.APIFormatKey, apiformat.Messages)
 	_, err = picker.(*PassthroughProfilePicker).Pick(context.Background(), cs, nil, profiles)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "passthrough")

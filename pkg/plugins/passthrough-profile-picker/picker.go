@@ -90,12 +90,27 @@ func (p *PassthroughProfilePicker) Pick(ctx context.Context, cycleState *plugin.
 	return profile, nil
 }
 
+// isPassthrough decides the profile from the format keys written by
+// model-provider-resolver, which must run in preProcessing (before the
+// framework calls Pick). The resolver writes InputAPIFormatKey for every
+// inference request on a recognized API path, and APIFormatKey only when an
+// ExternalModel matched.
 func isPassthrough(inputFormat, outputFormat apiformat.APIFormat) bool {
-	if inputFormat == "" || outputFormat == "" {
+	if inputFormat == "" {
+		// model-provider-resolver did not run before Pick (it must be
+		// configured in preProcessing) or the path is not a recognized
+		// inference API. Fall back to the translation profile, which
+		// preserves the pre-picker behavior for every request shape.
+		return false
+	}
+	if outputFormat == "" {
+		// Resolver ran but no ExternalModel matched — internal model,
+		// no translation needed.
 		return true
 	}
 	if inputFormat != outputFormat {
 		return false
 	}
+	// openai-chat still needs the translation profile for :path rewriting.
 	return inputFormat != apiformat.OpenAIChatCompletions
 }
