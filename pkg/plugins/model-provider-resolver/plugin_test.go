@@ -166,6 +166,10 @@ func TestProcessRequest_ModelNotFound(t *testing.T) {
 
 	_, err = plugin.ReadCycleStateKey[string](cs, state.ProviderKey)
 	require.Error(t, err)
+
+	inputFmt, err := plugin.ReadCycleStateKey[apiformat.APIFormat](cs, state.InputAPIFormatKey)
+	require.NoError(t, err, "input format should be recorded even when no ExternalModel matches")
+	require.Equal(t, apiformat.OpenAIChatCompletions, inputFmt)
 }
 
 func TestProcessRequest_NoModel(t *testing.T) {
@@ -202,6 +206,9 @@ func TestProcessRequest_BadPath(t *testing.T) {
 
 	_, err = plugin.ReadCycleStateKey[string](cs, state.ProviderKey)
 	require.Error(t, err)
+
+	_, err = plugin.ReadCycleStateKey[apiformat.APIFormat](cs, state.InputAPIFormatKey)
+	require.Error(t, err, "input format should not be recorded for unrecognized paths")
 }
 
 func TestSelectByWeight_SingleRef(t *testing.T) {
