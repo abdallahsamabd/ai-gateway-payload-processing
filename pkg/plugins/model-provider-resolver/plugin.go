@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net"
+	"os"
 	"strings"
 
 	errcommon "github.com/llm-d/llm-d-inference-payload-processor/pkg/common/error"
@@ -39,6 +40,7 @@ import (
 	inferencev1alpha1 "github.com/opendatahub-io/ai-gateway-payload-processing/api/inference/v1alpha1"
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/dynamicmetadata"
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/common/apiformat"
+	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/common/provider"
 	"github.com/opendatahub-io/ai-gateway-payload-processing/pkg/plugins/common/state"
 )
 
@@ -72,6 +74,7 @@ func ModelProviderResolverFactory(name string, configJSON json.RawMessage, handl
 		return nil, fmt.Errorf("failed to create plugin '%s' - %w", ModelProviderResolverPluginType, err)
 	}
 	p.hubMode = cfg.HubMode
+	p.clusterName = strings.TrimSpace(os.Getenv(state.ClusterNameEnv))
 
 	return p.WithName(name), nil
 }
@@ -128,10 +131,18 @@ func NewModelProviderResolver(reconcilerBuilder func() *builder.Builder, k8sClie
 // ModelProviderResolverPlugin resolves model names to provider info by watching ExternalModel CRDs.
 // It writes the model, provider and credential reference to CycleState for downstream plugins
 // (api-translation, api-key-injection).
+//
+// The plugin performs routing loop detection per issue #343: incoming
+// X-Origin-Cluster is compared to this cluster's CLUSTER_NAME. A match is a
+// true A→B→A loop-back and is rejected. A different origin (A→B→C) is allowed.
+// On an outgoing remote-maas hop the original origin is preserved, or this
+// cluster's name is injected if the header is absent. Loop detection is
+// disabled when CLUSTER_NAME is unset.
 type ModelProviderResolverPlugin struct {
-	typedName plugin.TypedName
-	store     *infoStore
-	hubMode   bool
+	typedName   plugin.TypedName
+	store       *infoStore
+	hubMode     bool
+	clusterName string
 }
 
 // TypedName returns the type and name tuple of this plugin instance.
@@ -146,6 +157,13 @@ func (p *ModelProviderResolverPlugin) WithName(name string) *ModelProviderResolv
 // ProcessRequest reads the model name from the request body, resolves the provider
 // from the store (populated by ExternalModel reconciler), and writes model, provider
 // and credential reference info to CycleState.
+//
+// The method also performs routing loop detection (#343):
+//   - Rejects when X-Origin-Cluster matches CLUSTER_NAME (A→B→A).
+//   - Allows a different origin (A→B→C) and local models.
+//   - Injects/restores X-Origin-Cluster only on remote-maas hops and hub
+//     TRANSFORM (spoke) hops — not on direct third-party APIs.
+//   - Hub PROPOSE does not inject (it is not an outbound hop). TRANSFORM does.
 func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleState *plugin.CycleState, request *requesthandling.InferenceRequest) error {
 	logger := log.FromContext(ctx).V(logutil.DEFAULT)
 
@@ -193,7 +211,13 @@ func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleS
 
 	logger.Info("resolved model by name", "modelName", modelName)
 
+	if err := p.checkRoutingLoop(ctx, cycleState, request); err != nil {
+		return err
+	}
+
 	// Hub mode PROPOSE: set dynamic metadata for EPP subset filtering.
+	// Incoming loop check already ran; PROPOSE is not an outbound hop so
+	// the origin header is not injected here.
 	if p.hubMode && request.Headers["x-gateway-destination-endpoint"] == "" {
 		return p.propose(ctx, request, modelInfo)
 	}
@@ -235,8 +259,82 @@ func (p *ModelProviderResolverPlugin) ProcessRequest(ctx context.Context, cycleS
 	cycleState.Write(state.CredsRefNamespace, ref.secretNamespace)
 	cycleState.Write(state.ModelConfigKey, ref.config)
 
+	p.restoreOrMarkOrigin(ctx, cycleState, request, ref)
+
 	logger.Info("external model resolved", "model", modelName, "provider", ref.provider, "inputFormat", inputFormat, "apiFormat", ref.apiFormat)
 	return nil
+}
+
+// checkRoutingLoop rejects a request whose X-Origin-Cluster matches this
+// cluster's CLUSTER_NAME (A→B→A). A different origin is allowed (A→B→C).
+// Disabled when CLUSTER_NAME is unset. Forbidden (403) is used because
+// errcommon has no LoopDetected/508 code.
+func (p *ModelProviderResolverPlugin) checkRoutingLoop(ctx context.Context, cycleState *plugin.CycleState, request *requesthandling.InferenceRequest) error {
+	if p.clusterName == "" {
+		return nil
+	}
+	origin := originCluster(cycleState, request)
+	if origin == "" || !strings.EqualFold(origin, p.clusterName) {
+		return nil
+	}
+
+	log.FromContext(ctx).V(logutil.DEFAULT).Error(nil,
+		"routing loop detected: request originated from this cluster",
+		"origin", origin, "cluster", p.clusterName)
+	return errcommon.Error{
+		Code: errcommon.Forbidden,
+		Msg:  "routing loop detected: request originated from this cluster",
+	}
+}
+
+func originCluster(cycleState *plugin.CycleState, request *requesthandling.InferenceRequest) string {
+	if cycleState != nil {
+		if captured, err := plugin.ReadCycleStateKey[string](cycleState, state.OriginClusterKey); err == nil {
+			if v := strings.TrimSpace(captured); v != "" {
+				return v
+			}
+		}
+	}
+	for key, value := range request.Headers {
+		if strings.EqualFold(key, state.OriginClusterHeader) {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+// restoreOrMarkOrigin puts X-Origin-Cluster back on remote-maas / hub
+// TRANSFORM hops after the guard stripped it. The first origin is preserved
+// (so A→B→A still sees A); if absent, this cluster's name is injected.
+// Direct third-party APIs (openai, anthropic, ...) are skipped.
+func (p *ModelProviderResolverPlugin) restoreOrMarkOrigin(ctx context.Context, cycleState *plugin.CycleState, request *requesthandling.InferenceRequest, ref *resolvedProviderRef) {
+	if !shouldInjectOrigin(ref, p.hubMode) {
+		return
+	}
+	origin := originCluster(cycleState, request)
+	if origin == "" {
+		origin = p.clusterName
+	}
+	if origin == "" {
+		return
+	}
+	request.SetHeader(state.OriginClusterHeader, origin)
+	log.FromContext(ctx).V(logutil.VERBOSE).Info("set origin cluster header",
+		"header", state.OriginClusterHeader, "origin", origin)
+}
+
+// shouldInjectOrigin is true for explicit remote-maas providers (#343) and
+// for hub TRANSFORM (hub→spoke is a cross-cluster hop even when the spoke
+// is typed openai). A non-empty path is not a signal: OpenAI/Anthropic CRs
+// always set path, and must not receive X-Origin-Cluster.
+func shouldInjectOrigin(ref *resolvedProviderRef, hubMode bool) bool {
+	if ref == nil {
+		return false
+	}
+	if hubMode {
+		return true
+	}
+	return strings.EqualFold(ref.provider, provider.RemoteMaaS)
 }
 
 // detectInputAPIFormat determines the client's API format from the request path suffix.
