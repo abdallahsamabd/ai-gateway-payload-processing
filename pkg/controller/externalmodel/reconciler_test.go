@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -242,10 +243,16 @@ func TestReconcile_ProviderNamespace(t *testing.T) {
 			require.NoError(t, k8sClient.Create(ctx, model))
 			var route gatewayapiv1.HTTPRoute
 			if scope == "foreign" {
+				// Foreign-only references are unservable by IPP, and AGC does
+				// not claim models by reference shape — in IPP namespaces it
+				// never writes model status — so IPP reports the failure.
 				waitForModelPhase(t, model.Name, ns, "Failed")
-				assert.True(t, apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &route)))
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model))
-				assert.Contains(t, model.Status.Conditions[0].Message, "cross-namespace ExternalProvider reference")
+				cond := meta.FindStatusCondition(model.Status.Conditions, ctrlcommon.ConditionTypeReady)
+				require.NotNil(t, cond)
+				assert.Contains(t, cond.Message, "cross-namespace ExternalProvider reference")
+				assert.Empty(t, model.Status.HTTPRouteName)
+				assert.True(t, apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &route)))
 			} else {
 				waitForModelPhase(t, model.Name, ns, "Ready")
 				require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &route))
@@ -275,20 +282,212 @@ func TestReconcile_ProviderNamespaceUpdate(t *testing.T) {
 				provider.Status.Phase = "Failed"
 				require.NoError(t, k8sClient.Status().Update(ctx, provider))
 			}
-			waitForModelPhase(t, model.Name, ns, "Failed")
 
 			var route gatewayapiv1.HTTPRoute
-			err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &route)
-			require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model))
 			if change == "foreign reference" {
-				assert.True(t, apierrors.IsNotFound(err), "explicit unsupported reference must withdraw the route")
+				// The foreign-only edit is unservable: IPP withdraws its
+				// route and reports Failed. AGC does not claim models by
+				// reference shape (in IPP namespaces it never writes model
+				// status), so freezing the last-written Ready would leave
+				// the model claiming service it no longer has.
+				require.Eventually(t, func() bool {
+					err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &route)
+					return apierrors.IsNotFound(err)
+				}, 10*time.Second, 100*time.Millisecond, "the foreign-only edit must withdraw the IPP-owned route")
+				waitForModelPhase(t, model.Name, ns, "Failed")
+				require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model))
+				cond := meta.FindStatusCondition(model.Status.Conditions, ctrlcommon.ConditionTypeReady)
+				require.NotNil(t, cond)
+				assert.Contains(t, cond.Message, "cross-namespace ExternalProvider reference")
 				assert.Empty(t, model.Status.HTTPRouteName)
 			} else {
+				waitForModelPhase(t, model.Name, ns, "Failed")
+				err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &route)
+				require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model))
 				require.NoError(t, err, "transient readiness failure must keep the last-known-good route")
 				assert.Equal(t, model.Name, model.Status.HTTPRouteName)
 			}
 		})
 	}
+}
+
+func TestReconcile_AGCManagedGatewayRefs(t *testing.T) {
+	ns := createTestNamespace(t)
+	createExternalProvider(t, "provider", ns, "local.example.com")
+
+	model := newExternalModel("agc-model", ns, "provider", "gpt")
+	model.Spec.GatewayRefs = []inferencev1alpha1.NamespacedObjectReference{
+		{Name: "tenant-gateway", Namespace: "gateway-ns"},
+	}
+	require.NoError(t, k8sClient.Create(ctx, model))
+
+	// AGC-managed shape skipped entirely
+	require.Never(t, func() bool {
+		m := &inferencev1alpha1.ExternalModel{}
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), m); err != nil {
+			return false
+		}
+		return m.Status.Phase != ""
+	}, 2*time.Second, 100*time.Millisecond, "IPP must not write status for AGC-managed models")
+	assert.True(t, apierrors.IsNotFound(
+		k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &gatewayapiv1.HTTPRoute{})))
+}
+
+func TestReconcile_AGCManagedTransition(t *testing.T) {
+	ns := createTestNamespace(t)
+	createExternalProvider(t, "provider", ns, "local.example.com")
+
+	// Start legacy-shaped: reconciled normally.
+	model := newExternalModel("transition", ns, "provider", "gpt")
+	require.NoError(t, k8sClient.Create(ctx, model))
+	waitForModelPhase(t, "transition", ns, "Ready")
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &gatewayapiv1.HTTPRoute{}))
+
+	// Edit to the AGC-managed shape: IPP must withdraw its own route...
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model))
+	old := model.DeepCopy()
+	model.Spec.GatewayRefs = []inferencev1alpha1.NamespacedObjectReference{
+		{Name: "tenant-gateway", Namespace: "gateway-ns"},
+	}
+	require.NoError(t, k8sClient.Patch(ctx, model, client.MergeFrom(old)))
+	require.Eventually(t, func() bool {
+		err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &gatewayapiv1.HTTPRoute{})
+		return apierrors.IsNotFound(err)
+	}, 10*time.Second, 100*time.Millisecond, "AGC-managed edit must withdraw the IPP-owned route")
+
+	// ...but never touch a route it does not own. Simulate AGC (or a user)
+	// re-creating the same-named route after the withdrawal.
+	foreignRoute := &gatewayapiv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "transition",
+			Namespace: ns,
+			Labels:    map[string]string{ctrlcommon.LabelManagedBy: "ai-gateway-controller"},
+		},
+	}
+	require.NoError(t, k8sClient.Create(ctx, foreignRoute))
+
+	// Trigger another reconcile of the AGC-managed model.
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model))
+	old = model.DeepCopy()
+	model.Annotations = map[string]string{"inference.opendatahub.io/probe": "reconcile"}
+	require.NoError(t, k8sClient.Patch(ctx, model, client.MergeFrom(old)))
+
+	// The foreign-owned route must survive and the status stay untouched.
+	assert.Never(t, func() bool {
+		err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &gatewayapiv1.HTTPRoute{})
+		return err != nil
+	}, 2*time.Second, 100*time.Millisecond, "IPP must not delete an HTTPRoute it does not own")
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model))
+	assert.Equal(t, "Ready", model.Status.Phase, "IPP must not rewrite status after the AGC-managed edit")
+}
+
+// foreignProviderRef returns a provider reference pointing at another
+// namespace. It deliberately reuses a name that also exists locally, so a
+// regression that resolves it by name in the model namespace instead of
+// skipping it changes the resolved reference set.
+func foreignProviderRef(name, namespace, targetModel string) inferencev1alpha1.ExternalProviderRef {
+	return inferencev1alpha1.ExternalProviderRef{
+		Ref:         inferencev1alpha1.ExternalProviderReference{Name: name, Namespace: namespace},
+		TargetModel: targetModel,
+		APIFormat:   "openai",
+		Path:        "/v1/chat/completions",
+	}
+}
+
+func TestReconcile_MixedProviderReferences(t *testing.T) {
+	ns := createTestNamespace(t)
+	foreign := createTestNamespace(t)
+	createExternalProvider(t, "provider", ns, "local.example.com")
+	// No provider exists in the foreign namespace or under a different
+	// local name: the foreign reference must be skipped, not resolved.
+
+	model := newExternalModel("mixed", ns, "provider", "gpt")
+	model.Spec.ExternalProviderRefs = append(model.Spec.ExternalProviderRefs,
+		foreignProviderRef("provider", foreign, "gpt"))
+	require.NoError(t, k8sClient.Create(ctx, model))
+
+	waitForModelPhase(t, "mixed", ns, "Ready")
+
+	// The route is kept and backed by the local provider only: one resolved
+	// reference produces 2 per-provider rules + 2 fallback rules.
+	route := &gatewayapiv1.HTTPRoute{}
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), route))
+	require.Len(t, route.Spec.Rules, 4, "the foreign reference must be skipped, not resolved")
+	assert.Equal(t, "local.example.com", route.Spec.Rules[0].Filters[0].RequestHeaderModifier.Set[0].Value)
+}
+
+func TestReconcile_MixedReferenceHandoff(t *testing.T) {
+	ns := createTestNamespace(t)
+	foreign := createTestNamespace(t)
+	createExternalProvider(t, "provider", ns, "local.example.com")
+
+	// Start legacy-shaped: reconciled normally.
+	model := newExternalModel("handoff", ns, "provider", "gpt")
+	require.NoError(t, k8sClient.Create(ctx, model))
+	waitForModelPhase(t, "handoff", ns, "Ready")
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &gatewayapiv1.HTTPRoute{}))
+
+	// Adding a foreign reference alongside the local one must not withdraw
+	// the route: the model keeps serving through its local reference until
+	// it is actually handed to AGC.
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model))
+	old := model.DeepCopy()
+	model.Spec.ExternalProviderRefs = append(model.Spec.ExternalProviderRefs,
+		foreignProviderRef("provider", foreign, "gpt"))
+	require.NoError(t, k8sClient.Patch(ctx, model, client.MergeFrom(old)))
+
+	require.Eventually(t, func() bool {
+		m := &inferencev1alpha1.ExternalModel{}
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), m); err != nil {
+			return false
+		}
+		cond := meta.FindStatusCondition(m.Status.Conditions, ctrlcommon.ConditionTypeReady)
+		return m.Status.Phase == "Ready" && cond != nil && cond.ObservedGeneration == m.Generation
+	}, 10*time.Second, 100*time.Millisecond, "the mixed edit must keep the model Ready")
+
+	route := &gatewayapiv1.HTTPRoute{}
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), route),
+		"the mixed edit must keep the serving route")
+	assert.Equal(t, "local.example.com", route.Spec.Rules[0].Filters[0].RequestHeaderModifier.Set[0].Value)
+
+	// Handing the model to AGC (gatewayRefs) withdraws the route and
+	// freezes status.
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model))
+	old = model.DeepCopy()
+	model.Spec.GatewayRefs = []inferencev1alpha1.NamespacedObjectReference{
+		{Name: "tenant-gateway", Namespace: "gateway-ns"},
+	}
+	require.NoError(t, k8sClient.Patch(ctx, model, client.MergeFrom(old)))
+	require.Eventually(t, func() bool {
+		err := k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &gatewayapiv1.HTTPRoute{})
+		return apierrors.IsNotFound(err)
+	}, 10*time.Second, 100*time.Millisecond, "the gatewayRefs edit must withdraw the IPP-owned route")
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), model))
+	assert.Equal(t, "Ready", model.Status.Phase, "IPP must not rewrite status after the AGC-managed edit")
+}
+
+func TestReconcile_MixedReferenceLocalFailureKeepsRoute(t *testing.T) {
+	ns := createTestNamespace(t)
+	foreign := createTestNamespace(t)
+	createExternalProvider(t, "provider", ns, "local.example.com")
+
+	model := newExternalModel("mixed-blip", ns, "provider", "gpt")
+	model.Spec.ExternalProviderRefs = append(model.Spec.ExternalProviderRefs,
+		foreignProviderRef("provider", foreign, "gpt"))
+	require.NoError(t, k8sClient.Create(ctx, model))
+	waitForModelPhase(t, "mixed-blip", ns, "Ready")
+
+	// The local provider degrades: the mixed model reports Failed but, like
+	// a local-only model, keeps its last-known-good route rather than
+	// withdrawing it.
+	provider := &inferencev1alpha1.ExternalProvider{}
+	require.NoError(t, k8sClient.Get(ctx, types.NamespacedName{Name: "provider", Namespace: ns}, provider))
+	provider.Status.Phase = "Failed"
+	require.NoError(t, k8sClient.Status().Update(ctx, provider))
+
+	waitForModelPhase(t, "mixed-blip", ns, "Failed")
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(model), &gatewayapiv1.HTTPRoute{}),
+		"a transient local failure must keep the last-known-good route")
 }
 
 func TestReconcile_MissingProvider(t *testing.T) {

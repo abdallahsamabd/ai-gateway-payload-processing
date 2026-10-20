@@ -99,6 +99,19 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, nil
 	}
 
+	// AGC attachments (spec.gatewayRefs) are served by
+	// ai-gateway-controller regardless of the model namespace, and AGC owns
+	// their status. Withdraw any HTTPRoute this controller still owns from a
+	// previous legacy-shaped reconciliation, then leave the object alone.
+	if ctrlcommon.IsAGCAttached(model) {
+		if err := r.deleteOwnedHTTPRoute(ctx, model); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to withdraw HTTPRoute for AGC-attached ExternalModel %q: %w", model.Name, err)
+		}
+		logger.Info("skipping AGC-attached ExternalModel",
+			"name", model.Name, "namespace", model.Namespace)
+		return ctrl.Result{}, nil
+	}
+
 	if model.Status.Phase == "" {
 		r.setStatus(ctx, logger, model, "Pending", metav1.ConditionFalse, "Reconciling", "Reconciliation in progress")
 	}
@@ -128,13 +141,16 @@ func (r *Reconciler) reconcileHTTPRoute(ctx context.Context, logger logr.Logger,
 
 	var resolved []resolvedRef
 	var skipReasons []string
-	unsupportedNamespace := false
+	localRef := false
 	for _, ref := range model.Spec.ExternalProviderRefs {
 		if ref.Ref.Namespace != "" && ref.Ref.Namespace != model.Namespace {
-			unsupportedNamespace = true
+			// Cross-namespace references are never resolved by IPP. A
+			// mixed-shape model keeps serving through its local
+			// references; a foreign-only model is handled below.
 			skipReasons = append(skipReasons, fmt.Sprintf("cross-namespace ExternalProvider reference %q is not supported", ref.Ref.Namespace+"/"+ref.Ref.Name))
 			continue
 		}
+		localRef = true
 		provider := &inferencev1alpha1.ExternalProvider{}
 		providerKey := types.NamespacedName{Name: ref.Ref.Name, Namespace: model.Namespace}
 		if err := r.Get(ctx, providerKey, provider); err != nil {
@@ -170,14 +186,24 @@ func (r *Reconciler) reconcileHTTPRoute(ctx context.Context, logger logr.Logger,
 	}
 
 	if len(resolved) == 0 {
-		// A foreign reference is an explicit spec change, not a transient
-		// readiness failure, so withdraw the route instead of keeping last-known-good.
-		if unsupportedNamespace {
+		if !localRef && len(model.Spec.ExternalProviderRefs) > 0 {
+			// Foreign-only reference set: nothing can serve the model, and
+			// AGC does not claim models by reference shape — in namespaces
+			// selecting IPP it never writes model status
+			// (cleanupUnselectedModel), so IPP stays the status owner.
+			// Withdraw the route rather than keep last-known-good: the
+			// reference set is unservable, not transiently failing.
 			if err := r.deleteOwnedHTTPRoute(ctx, model); err != nil {
 				return fmt.Errorf("failed to remove stale HTTPRoute: %w", err)
 			}
 			model.Status.HTTPRouteName = ""
 		}
+		// A mixed-shape model whose local references all fail resolution
+		// keeps its last-known-good route, exactly like a local-only model:
+		// the shape is servable, so this is a transient readiness failure
+		// rather than a handoff. (Main withdrew the route whenever a
+		// foreign reference was present; that rationale only holds for
+		// unservable shapes, handled above.)
 		return fmt.Errorf("ExternalModel %q: no provider refs resolved successfully: %s", model.Name, strings.Join(skipReasons, "; "))
 	}
 
