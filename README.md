@@ -67,6 +67,27 @@ kubectl apply -f config/crd/bases/
     put `CLUSTER_NAME` in `values.yaml` as `env[0]` — Helm `--set env[0]` from
     the install command would replace the whole list.
 
+    ### gRPC max receive message size
+
+    Envoy delivers each ext_proc request/response body chunk as one gRPC message.
+    The processor's **per-message** receive limit defaults to **32 MiB** (above
+    gRPC's compiled 4 MiB default) so multimodal / agent chat bodies with base64
+    images do not fail with an empty HTTP 500 (`received_message_larger_than_max`).
+
+    For Helm installs, append these arguments to the `helm install` command above
+    to override `GRPC_MAX_RECV_MSG_SIZE` (bytes or a Kubernetes quantity such as
+    `64Mi`):
+
+    ```bash
+    --set upstreamIpp.payloadProcessor.env[3].name=GRPC_MAX_RECV_MSG_SIZE \
+    --set upstreamIpp.payloadProcessor.env[3].value=64Mi
+    ```
+
+    When MaaS owns the Deployment, this env override is **not currently
+    supported**. A one-off `kubectl set env` will be reconciled away, and there
+    is not yet a `MaasTenantConfig` field or annotation to persist it. Tracked
+    as [RHOAIENG-102134](https://redhat.atlassian.net/browse/RHOAIENG-102134).
+
 ## Cleanup
 
 1.  Uninstall `payload-processing` helm chart:
